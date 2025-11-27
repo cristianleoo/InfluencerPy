@@ -11,22 +11,14 @@ Before you begin, ensure you have the following:
 
 ## Installation
 
-### Option 1: Install via PIP (Recommended)
+### Installation
 
-InfluencerPy is available as a Python package.
-
-```bash
-pip install influencerpy
-```
-
-### Option 2: Install from Source
-
-If you want the latest features or want to contribute:
+InfluencerPy is currently available via source installation.
 
 1.  Clone the repository:
     ```bash
-    git clone https://github.com/yourusername/influencerpy.git
-    cd influencerpy
+    git clone https://github.com/cristianleoo/InfluencerPy.git
+    cd InfluencerPy
     ```
 
 2.  Install dependencies:

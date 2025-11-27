@@ -16,7 +16,9 @@ InfluencerPy is an intelligent CLI agent that helps you discover, curate, and pu
 ## Quick Start
 
 ```bash
-pip install influencerpy
+git clone https://github.com/cristianleoo/InfluencerPy.git
+cd InfluencerPy
+pip install -e .
 influencerpy
 ```
 
