@@ -19,3 +19,10 @@ InfluencerPy is an intelligent CLI agent that helps you discover, curate, and pu
 pip install influencerpy
 influencerpy
 ```
+
+## Documentation
+
+*   [Getting Started](getting-started.md): Installation and initial setup.
+*   [Scouts](concepts/scouts.md): Learn about different scout types (Search, RSS, Reddit, Arxiv).
+*   [Telegram Integration](channels/telegram.md): Setup and use the Telegram bot for remote control.
+*   [Scheduling](concepts/scheduling.md): Automate your content pipeline.

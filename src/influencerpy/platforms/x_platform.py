@@ -1,6 +1,7 @@
 import os
 import tweepy
 import textwrap
+import math
 from typing import Optional
 from influencerpy.core.interfaces import SocialProvider
 from influencerpy.core.models import Platform, PostDraft
@@ -23,11 +24,7 @@ class XProvider(SocialProvider):
         access_token = os.getenv("X_ACCESS_TOKEN")
         access_token_secret = os.getenv("X_ACCESS_TOKEN_SECRET")
 
-        # DEBUG: Verify keys being used
-        if api_key and api_secret:
-             print(f"DEBUG PROVIDER: Key={api_key[:5]}... Secret={api_secret[:5]}...")
-        else:
-             print("DEBUG PROVIDER: Missing keys")
+
 
         if not all([api_key, api_secret, access_token, access_token_secret]):
             return False
@@ -97,7 +94,7 @@ class XProvider(SocialProvider):
                 try:
                     response = self.client.create_tweet(text=content)
                     return str(response.data['id'])
-                except tweepy.Errors.Forbidden as e:
+                except tweepy.errors.Forbidden as e:
                     # Fallback: sometimes Premium detection might be stale or specific endpoint issue
                     # If it fails and length > 280, try threading as backup?
                     # But 'Forbidden' usually means length issue if 403.
@@ -108,7 +105,19 @@ class XProvider(SocialProvider):
                         raise e
 
             # Threading Logic (for Free tier or Fallback)
-            tweets = textwrap.wrap(content, width=280, break_long_words=True, break_on_hyphens=False)
+            # Calculate ideal number of tweets
+            num_tweets = math.ceil(len(content) / 280)
+            
+            # Calculate target width to balance tweets
+            # We add a buffer because textwrap breaks on whitespace, so lines are often shorter than width
+            target_width = math.ceil(len(content) / num_tweets) + 40 
+            target_width = min(target_width, 280)
+            
+            tweets = textwrap.wrap(content, width=target_width, break_long_words=True, break_on_hyphens=False)
+            
+            # If balancing resulted in more tweets than necessary, fallback to max width
+            if len(tweets) > num_tweets:
+                tweets = textwrap.wrap(content, width=280, break_long_words=True, break_on_hyphens=False)
             
             first_id = None
             previous_id = None
@@ -127,7 +136,7 @@ class XProvider(SocialProvider):
                     
             return first_id
             
-        except tweepy.Errors.TooManyRequests:
+        except tweepy.errors.TooManyRequests:
             raise RuntimeError(
                 f"Rate Limit Exceeded (429). Your account ({self.account_tier}) "
                 f"has likely hit the daily limit (approx {self.daily_post_limit} posts/24h)."

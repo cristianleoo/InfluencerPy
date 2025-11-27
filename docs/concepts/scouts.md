@@ -70,6 +70,17 @@ InfluencerPy offers four specialized Scout types, each designed for a different 
     *   **URL**: The target website address.
 *   **Use Case:** Summarizing a specific company's press release page or a daily updated status report.
 
+### 5. Arxiv Scout 🎓
+
+**Best for:** Finding academic papers and technical research.
+
+*   **How it works:** Uses the **Arxiv Tool** to search for papers on Arxiv.org.
+*   **Configuration:**
+    *   **Query**: The search topic or Arxiv ID (e.g., "LLM agents", "2310.12345").
+*   **Example Use Case:**
+    *   *Query:* "Large Language Models"
+    *   *Result:* The Scout finds the latest relevant paper, summarizes the abstract and key findings, and drafts a post sharing the research.
+
 ---
 
 ## Optimization & Calibration

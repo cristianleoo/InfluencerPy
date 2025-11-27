@@ -48,23 +48,25 @@ def print_header(clear_screen: bool = False):
     console.print(Align.center(f"[bold magenta]{title}[/bold magenta]"))
     console.print(Align.center("[dim]Premium Social Media Automation[/dim]\n"))
 
-def _setup_credentials():
-    """Interactive credential setup with guide."""
-    print_header()
+def _ensure_env_file():
+    if not os.path.exists(ENV_FILE):
+        with open(ENV_FILE, "w") as f:
+            f.write("")
+
+def _setup_x_credentials():
+    """Setup X (Twitter) credentials."""
     console.print(Panel.fit(
-        "[bold cyan]Credential Setup Guide[/bold cyan]\n\n"
-        "To use InfluencerPy, you need API keys for the platforms you want to automate.\n"
-        "Currently supported: [bold]X (Twitter)[/bold].\n\n"
+        "[bold cyan]X (Twitter) Setup[/bold cyan]\n\n"
         "[yellow]How to get X API Keys:[/yellow]\n"
         "1. Go to [link=https://developer.twitter.com/en/portal/dashboard]X Developer Portal[/link]\n"
         "2. Create a Project and App.\n"
         "3. Generate [bold]Consumer Keys[/bold] (API Key & Secret).\n"
         "4. Generate [bold]Authentication Tokens[/bold] (Access Token & Secret) with [italic]Read and Write[/italic] permissions.\n",
-        title="Setup Guide",
+        title="X Setup",
         border_style="cyan"
     ))
     
-    console.print("\n[bold]Enter your keys below (leave empty to skip/keep existing):[/bold]\n")
+    _ensure_env_file()
     
     keys = [
         ("X_API_KEY", "X API Key"),
@@ -73,26 +75,63 @@ def _setup_credentials():
         ("X_ACCESS_TOKEN_SECRET", "X Access Token Secret"),
     ]
     
-    if not os.path.exists(ENV_FILE):
-        with open(ENV_FILE, "w") as f:
-            f.write("")
-            
     for key, label in keys:
         current = os.getenv(key)
         default_val = current if current else ""
-        
-        # Use questionary for password input
-        value = questionary.password(
-            f"{label}:", 
-            default=default_val
-        ).unsafe_ask()
-        
+        value = questionary.password(f"{label}:", default=default_val).unsafe_ask()
         if value:
             set_key(ENV_FILE, key, value)
             os.environ[key] = value
             
-    console.print("\n[bold green]✓ Credentials saved successfully![/bold green]")
-    questionary.press_any_key_to_continue().unsafe_ask()
+    console.print("[green]✓ X credentials saved![/green]")
+
+def _setup_telegram_credentials():
+    """Setup Telegram credentials."""
+    console.print(Panel.fit(
+        "[bold cyan]Telegram Setup[/bold cyan]\n\n"
+        "[yellow]How to get Telegram Credentials:[/yellow]\n"
+        "1. Message @BotFather on Telegram to create a new bot and get the [bold]Bot Token[/bold].\n"
+        "2. Message @userinfobot to get your [bold]Chat ID[/bold].\n",
+        title="Telegram Setup",
+        border_style="cyan"
+    ))
+    
+    _ensure_env_file()
+    
+    keys = [
+        ("TELEGRAM_BOT_TOKEN", "Telegram Bot Token"),
+        ("TELEGRAM_CHAT_ID", "Telegram Chat ID"),
+    ]
+    
+    for key, label in keys:
+        current = os.getenv(key)
+        default_val = current if current else ""
+        value = questionary.password(f"{label}:", default=default_val).unsafe_ask()
+        if value:
+            set_key(ENV_FILE, key, value)
+            os.environ[key] = value
+            
+    console.print("[green]✓ Telegram credentials saved![/green]")
+
+def _setup_credentials():
+    """Interactive credential setup menu."""
+    print_header()
+    while True:
+        choice = questionary.select(
+            "Select platform to configure:",
+            choices=[
+                "X (Twitter)",
+                "Telegram",
+                "Done"
+            ]
+        ).unsafe_ask()
+        
+        if choice == "X (Twitter)":
+            _setup_x_credentials()
+        elif choice == "Telegram":
+            _setup_telegram_credentials()
+        elif choice == "Done":
+            break
 
 def _build_custom_schedule() -> str:
     """Interactive wizard to build a cron string with multi-select options."""
@@ -317,13 +356,35 @@ def init():
     create_db_and_tables()
     console.print("[green]Database initialized successfully![/green]")
     
-    if questionary.confirm("Do you want to set up credentials now?").unsafe_ask():
-        _setup_credentials()
+    console.print("[bold]Optional Credential Setup[/bold]\n")
+    
+    console.print("InfluencerPy can automatically post to X (Twitter).")
+    if questionary.confirm("Do you want to set up X credentials now? (Required for auto-posting)").unsafe_ask():
+        _setup_x_credentials()
+        
+    console.print("\nInfluencerPy can send drafts to Telegram for your review before posting.")
+    if questionary.confirm("Do you want to set up Telegram credentials now? (Recommended for control)").unsafe_ask():
+        _setup_telegram_credentials()
+        
+    console.print("\n[green]Initialization complete![/green]")
 
 @app.command()
 def configure():
     """Update credentials interactively."""
     _setup_credentials()
+
+@app.command()
+def bot():
+    """Run the Telegram notification bot."""
+    import asyncio
+    from influencerpy.channels.telegram import TelegramChannel
+    
+    if not os.getenv("TELEGRAM_BOT_TOKEN"):
+        console.print("[red]Error: TELEGRAM_BOT_TOKEN not found. Run 'configure' first.[/red]")
+        return
+        
+    channel = TelegramChannel()
+    asyncio.run(channel.start())
 
 @app.command()
 def news(
@@ -569,8 +630,27 @@ def scouts():
                 
                 # Check if Telegram review is enabled
                 if scout.telegram_review:
-                    console.print("[yellow]Telegram review is enabled but not yet implemented.[/yellow]")
-                    console.print("[yellow]Posting directly for now...[/yellow]")
+                    console.print("[yellow]Sending to Telegram for review...[/yellow]")
+                    
+                    # Save to DB with status 'pending_review'
+                    with next(get_session()) as session:
+                        # We need to save one post per platform or handle it generically.
+                        # For now, let's assume the review approves for all configured platforms.
+                        # We'll store the first platform in the post model for reference, 
+                        # but in a real multi-platform scenario we might need a better schema.
+                        primary_platform = platforms[0] if platforms else "x"
+                        
+                        db_post = PostModel(
+                            content=draft_content,
+                            platform=primary_platform,
+                            status="pending_review",
+                            created_at=datetime.utcnow()
+                        )
+                        session.add(db_post)
+                        session.commit()
+                        
+                    console.print("[green]Draft saved! Check your Telegram bot to approve.[/green]")
+                    continue # Skip direct posting
                 
                 # Post to all configured platforms
                 for platform in platforms:
@@ -745,11 +825,19 @@ def scouts():
             # What to update?
             update_field = questionary.select(
                 "What do you want to update?",
-                choices=["Name", "Configuration (Query/Feed)", "Tools", "System Prompt", "Advanced Settings (Model/Temp)", "Schedule", "Cancel"]
+                choices=["Name", "Configuration (Query/Feed)", "Tools", "System Prompt", "Advanced Settings (Model/Temp)", "Schedule", "Telegram Review", "Cancel"]
             ).unsafe_ask()
             
             if update_field == "Cancel":
                 continue
+
+            if update_field == "Telegram Review":
+                enable_review = questionary.confirm(
+                    "Enable review on Telegram before posting?",
+                    default=scout.telegram_review
+                ).unsafe_ask()
+                manager.update_scout(scout, telegram_review=enable_review)
+                console.print(f"[green]Telegram review {'enabled' if enable_review else 'disabled'}![/green]")
                 
             if update_field == "Tools":
                 config = json.loads(scout.config_json)
@@ -964,53 +1052,53 @@ def main(ctx: typer.Context):
     # ... (rest of main)
 
 
-    # Interactive Menu Mode
-    while True:
-        try:
-            # Don't clear screen in loop to allow scrolling history
-            print_header(clear_screen=False) 
-            
-            choice = questionary.select(
-                "What would you like to do?",
-                choices=[
-                    "Manage Scouts",
-                    "Fetch News & Draft",
-                    "View History",
-                    "Configure AI Settings",
-                    "Configure Credentials",
-                    "Exit"
-                ]
-            ).unsafe_ask()
-            
-            if choice == "Manage Scouts":
-                scouts()
-            elif choice == "Fetch News & Draft":
-                news(limit=5)
-            elif choice == "View History":
-                history()
-            elif choice == "Configure AI Settings":
-                _setup_config_wizard()
-            elif choice == "Configure Credentials":
-                _setup_credentials()
-            elif choice == "Exit":
-                console.print("[yellow]Goodbye![/yellow]")
-                logger.info("Application shutdown")
-                break
+        # Interactive Menu Mode
+        while True:
+            try:
+                # Don't clear screen in loop to allow scrolling history
+                print_header(clear_screen=False) 
                 
-        except KeyboardInterrupt:
-            console.print("\n") # Newline for cleanliness
-            if questionary.confirm("Do you want to quit the application?", default=False).ask():
-                console.print("[yellow]Goodbye![/yellow]")
-                break
-            else:
-                continue # Back to main menu
-        except Exception as e:
-            logger.error(f"Unhandled exception: {e}", exc_info=True)
-            console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
-            if questionary.confirm("Do you want to continue?", default=True).ask():
-                continue
-            else:
-                break
+                choice = questionary.select(
+                    "What would you like to do?",
+                    choices=[
+                        "Manage Scouts",
+                        "Fetch News & Draft",
+                        "View History",
+                        "Configure AI Settings",
+                        "Configure Credentials",
+                        "Exit"
+                    ]
+                ).unsafe_ask()
+                
+                if choice == "Manage Scouts":
+                    scouts()
+                elif choice == "Fetch News & Draft":
+                    news(limit=5)
+                elif choice == "View History":
+                    history()
+                elif choice == "Configure AI Settings":
+                    _setup_config_wizard()
+                elif choice == "Configure Credentials":
+                    _setup_credentials()
+                elif choice == "Exit":
+                    console.print("[yellow]Goodbye![/yellow]")
+                    logger.info("Application shutdown")
+                    break
+                    
+            except KeyboardInterrupt:
+                console.print("\n") # Newline for cleanliness
+                if questionary.confirm("Do you want to quit the application?", default=False).ask():
+                    console.print("[yellow]Goodbye![/yellow]")
+                    break
+                else:
+                    continue # Back to main menu
+            except Exception as e:
+                logger.error(f"Unhandled exception: {e}", exc_info=True)
+                console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
+                if questionary.confirm("Do you want to continue?", default=True).ask():
+                    continue
+                else:
+                    break
 
 if __name__ == "__main__":
     app()

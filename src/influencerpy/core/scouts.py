@@ -8,6 +8,7 @@ from strands import Agent
 from strands_tools import rss, http_request
 from influencerpy.tools.search import google_search
 from influencerpy.tools.reddit import reddit
+from influencerpy.tools.arxiv_tool import arxiv_search
 
 from influencerpy.database import get_session, ScoutModel, ScoutFeedbackModel, ScoutCalibrationModel
 from influencerpy.core.models import ContentItem
@@ -57,7 +58,7 @@ class ScoutManager:
         self.session.refresh(scout)
         return scout
 
-    def update_scout(self, scout: ScoutModel, name: str = None, config: dict = None, schedule_cron: str = None, prompt_template: str = None) -> ScoutModel:
+    def update_scout(self, scout: ScoutModel, name: str = None, config: dict = None, schedule_cron: str = None, prompt_template: str = None, telegram_review: bool = None) -> ScoutModel:
         """Update an existing Scout."""
         if name:
             scout.name = name
@@ -67,6 +68,8 @@ class ScoutManager:
             scout.schedule_cron = schedule_cron
         if prompt_template is not None:
             scout.prompt_template = prompt_template
+        if telegram_review is not None:
+            scout.telegram_review = telegram_review
             
         self.session.add(scout)
         self.session.commit()
@@ -127,6 +130,8 @@ class ScoutManager:
                     agent_tools.append(google_search)
                 if "reddit" in tools_config:
                     agent_tools.append(reddit)
+                if "arxiv" in tools_config:
+                    agent_tools.append(arxiv_search)
                     
                 if agent_tools:
                     logger.info(f"Initializing agent with tools: {[t.tool_name for t in agent_tools]}")
@@ -175,6 +180,8 @@ class ScoutManager:
                         elif subreddits:
                             sub_list = ", ".join(subreddits)
                             goal = f"Find interesting content from the following subreddits: {sub_list}. Use the 'reddit' tool."
+                        elif "arxiv" in tools_config:
+                            goal = f"Find research papers about: \"{query or 'latest research'}\". Use the 'arxiv_search' tool."
                         else:
                             goal = f"Find interesting content about: \"{query or 'latest news'}\""
                             

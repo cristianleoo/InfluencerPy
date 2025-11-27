@@ -187,3 +187,30 @@ def test_run_reddit_scout(mock_model, mock_agent, mock_logger, session, config_m
     # Verify reddit tool is present
     tool_names = [t.tool_name for t in tools]
     assert "reddit" in tool_names
+
+@patch("influencerpy.core.scouts.get_scout_logger")
+@patch("influencerpy.core.scouts.Agent")
+@patch("strands.models.gemini.GeminiModel")
+def test_run_arxiv_scout(mock_model, mock_agent, mock_logger, session, config_manager):
+    """Test running a scout configured with arxiv tool."""
+    manager = ScoutManager()
+    manager.session = session
+    
+    mock_agent_instance = MagicMock()
+    mock_agent.return_value = mock_agent_instance
+    mock_agent_instance.return_value = "[]" 
+    
+    config = {
+        "query": "LLM Agents",
+        "tools": ["arxiv"]
+    }
+    scout = manager.create_scout("Arxiv Scout", "arxiv", config)
+    
+    manager.run_scout(scout)
+    
+    # Verify agent tools
+    args, kwargs = mock_agent.call_args
+    tools = kwargs["tools"]
+    # Verify arxiv tool is present
+    tool_names = [t.tool_name for t in tools]
+    assert "arxiv_search" in tool_names

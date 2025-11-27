@@ -1,5 +1,6 @@
 site_name: InfluencerPy
 site_description: Premium Social Media Automation CLI
+repo_url: https://github.com/cristianleoo/InfluencerPy
 
 theme:
   name: material
@@ -34,18 +35,42 @@ theme:
     - navigation.sections
     - navigation.expand
     - navigation.path
+    - navigation.prune
+    - navigation.indexes
     - navigation.top
+    - navigation.footer
     - toc.follow
     - search.suggest
     - search.highlight
     - search.share
     - content.code.copy
     - content.tooltips
+    - content.action.edit
+    - content.action.view
+
+  icon:
+    logo: material/robot-outline
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/cristianleoo/InfluencerPy
+    - icon: fontawesome/brands/twitter
+      link: https://twitter.com/
+    - icon: fontawesome/brands/telegram
+      link: https://t.me/
 
 markdown_extensions:
   - admonition
   - pymdownx.details
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.highlight:
@@ -54,9 +79,14 @@ markdown_extensions:
       pygments_lang_class: true
   - pymdownx.inlinehilite
   - pymdownx.snippets
-  - pymdownx.emoji
+  - pymdownx.emoji:
+      emoji_index: !!python/name:materialx.emoji.twemoji
+      emoji_generator: !!python/name:materialx.emoji.to_svg
   - attr_list
   - md_in_html
+  - pymdownx.keys
+  - pymdownx.mark
+  - pymdownx.tilde
   - toc:
       permalink: true
 
@@ -66,4 +96,6 @@ nav:
   - Concepts:
     - Scouts: concepts/scouts.md
     - Scheduling: concepts/scheduling.md
+  - Channels:
+    - Telegram: channels/telegram.md
   - API Reference: reference.md

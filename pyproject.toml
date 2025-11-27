@@ -25,6 +25,8 @@ dependencies = [
   "questionary",
   "pyfiglet",
   "mkdocs-material",
+  "arxiv",
+  "beautifulsoup4",
 ]
 
 [project.scripts]
