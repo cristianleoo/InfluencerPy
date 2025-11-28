@@ -14,7 +14,7 @@
         <link rel="prev" href="../../getting-started/">
       
       
-        <link rel="next" href="../scheduling/">
+        <link rel="next" href="../scheduler/">
       
       
         
@@ -308,6 +308,25 @@
   
   
     <li class="md-tabs__item">
+      <a href="../../deployment/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Deployment
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
       <a href="../../reference/" class="md-tabs__link">
         
   
@@ -436,6 +455,10 @@
   
     
     
+      
+        
+      
+        
       
         
       
@@ -635,6 +658,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#6-meta-scout-orchestrator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Meta-Scout (Orchestrator) 🤖
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -683,6 +717,62 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scheduler/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Scheduler
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../image-generation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Image Generation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -776,6 +866,33 @@
   
 
       
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -905,6 +1022,17 @@
     <span class="md-ellipsis">
       
         5. Arxiv Scout 🎓
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-meta-scout-orchestrator" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Meta-Scout (Orchestrator) 🤖
       
     </span>
   </a>
@@ -1124,11 +1252,38 @@
 <li><strong>How it works:</strong> Uses the <strong>Arxiv Tool</strong> to search for papers on Arxiv.org.</li>
 <li><strong>Configuration:</strong><ul>
 <li><strong>Query</strong>: The search topic or Arxiv ID (e.g., "LLM agents", "2310.12345").</li>
+<li><strong>Date Filter</strong>: Optional filter to restrict results to "Today", "This Week", or "This Month".</li>
 </ul>
 </li>
 <li><strong>Example Use Case:</strong><ul>
 <li><em>Query:</em> "Large Language Models"</li>
-<li><em>Result:</em> The Scout finds the latest relevant paper, summarizes the abstract and key findings, and drafts a post sharing the research.</li>
+<li><em>Filter:</em> "This Week"</li>
+<li><em>Result:</em> The Scout finds the most relevant paper published in the last 7 days, ensuring freshness.</li>
+</ul>
+</li>
+</ul>
+<h3 id="6-meta-scout-orchestrator">6. Meta-Scout (Orchestrator) 🤖<a class="headerlink" href="#6-meta-scout-orchestrator" title="Permanent link">&para;</a></h3>
+<p><strong>Best for:</strong> Complex research tasks that require combining data from multiple sources.</p>
+<ul>
+<li><strong>How it works:</strong> Uses the <strong>Agents as Tools</strong> pattern. It acts as a manager that can call other existing Scouts as if they were tools.</li>
+<li><strong>Creation Modes:</strong><ol>
+<li><strong>Wrap Existing Scouts</strong>: Select "Meta-Scout" -&gt; "Wrap Existing Scouts" to orchestrate scouts you've already created.</li>
+<li><strong>Create New Bundle</strong>: Select "Meta-Scout" -&gt; "Create New Bundle" to select multiple scout types (e.g., Search + Arxiv) and create them all at once along with the orchestrator.</li>
+</ol>
+</li>
+<li><strong>Configuration:</strong><ul>
+<li><strong>Child Scouts</strong>: The scouts this Meta-Scout controls.</li>
+<li><strong>Orchestration Goal</strong>: A high-level instruction (e.g., "Find a trending AI topic using the Search Scout, then find a research paper about it using the Arxiv Scout, and summarize both.").</li>
+</ul>
+</li>
+<li><strong>Dynamic Configuration:</strong> The Meta-Scout can dynamically override settings of its child scouts at runtime.<ul>
+<li><strong>HTTP Request Scout:</strong> The orchestrator can change the target <code>url</code> (e.g., to fetch a date-specific URL).</li>
+<li><strong>Arxiv Scout:</strong> The orchestrator can change the <code>date_filter</code> (e.g., to focus on "today" or "week").</li>
+</ul>
+</li>
+<li><strong>Example Use Case:</strong><ul>
+<li><em>Goal:</em> "Check the 'Tech News' RSS Scout for the latest Apple announcement, then use the 'Reddit' Scout to find community reactions to it."</li>
+<li><em>Result:</em> A comprehensive report combining official news with public sentiment.</li>
 </ul>
 </li>
 </ul>
@@ -1201,13 +1356,13 @@
         
         
           
-          <a href="../scheduling/" class="md-footer__link md-footer__link--next" aria-label="Next: Scheduling">
+          <a href="../scheduler/" class="md-footer__link md-footer__link--next" aria-label="Next: Scheduler">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Scheduling
+                Scheduler
               </div>
             </div>
             <div class="md-footer__button md-icon">
