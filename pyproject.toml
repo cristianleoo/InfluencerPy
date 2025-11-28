@@ -27,6 +27,7 @@ dependencies = [
   "mkdocs-material",
   "arxiv",
   "beautifulsoup4",
+  "apscheduler",
 ]
 
 [project.scripts]

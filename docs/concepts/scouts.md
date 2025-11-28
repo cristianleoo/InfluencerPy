@@ -77,9 +77,29 @@ InfluencerPy offers four specialized Scout types, each designed for a different 
 *   **How it works:** Uses the **Arxiv Tool** to search for papers on Arxiv.org.
 *   **Configuration:**
     *   **Query**: The search topic or Arxiv ID (e.g., "LLM agents", "2310.12345").
+    *   **Date Filter**: Optional filter to restrict results to "Today", "This Week", or "This Month".
 *   **Example Use Case:**
     *   *Query:* "Large Language Models"
-    *   *Result:* The Scout finds the latest relevant paper, summarizes the abstract and key findings, and drafts a post sharing the research.
+    *   *Filter:* "This Week"
+    *   *Result:* The Scout finds the most relevant paper published in the last 7 days, ensuring freshness.
+
+### 6. Meta-Scout (Orchestrator) 🤖
+
+**Best for:** Complex research tasks that require combining data from multiple sources.
+
+*   **How it works:** Uses the **Agents as Tools** pattern. It acts as a manager that can call other existing Scouts as if they were tools.
+*   **Creation Modes:**
+    1.  **Wrap Existing Scouts**: Select "Meta-Scout" -> "Wrap Existing Scouts" to orchestrate scouts you've already created.
+    2.  **Create New Bundle**: Select "Meta-Scout" -> "Create New Bundle" to select multiple scout types (e.g., Search + Arxiv) and create them all at once along with the orchestrator.
+*   **Configuration:**
+    *   **Child Scouts**: The scouts this Meta-Scout controls.
+    *   **Orchestration Goal**: A high-level instruction (e.g., "Find a trending AI topic using the Search Scout, then find a research paper about it using the Arxiv Scout, and summarize both.").
+*   **Dynamic Configuration:** The Meta-Scout can dynamically override settings of its child scouts at runtime.
+    *   **HTTP Request Scout:** The orchestrator can change the target `url` (e.g., to fetch a date-specific URL).
+    *   **Arxiv Scout:** The orchestrator can change the `date_filter` (e.g., to focus on "today" or "week").
+*   **Example Use Case:**
+    *   *Goal:* "Check the 'Tech News' RSS Scout for the latest Apple announcement, then use the 'Reddit' Scout to find community reactions to it."
+    *   *Result:* A comprehensive report combining official news with public sentiment.
 
 ---
 

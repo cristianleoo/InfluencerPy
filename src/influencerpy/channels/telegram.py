@@ -31,7 +31,8 @@ class TelegramChannel(BaseChannel):
         self.application = Application.builder().token(self.token).build()
 
         self.application.add_handler(CommandHandler("start", self._start_command))
-        self.application.add_handler(CommandHandler("check", lambda u, c: self.check_pending_posts(c)))
+        self.application.add_handler(CommandHandler("help", self._help_command))
+        self.application.add_handler(CommandHandler("check", self._check_command))
         self.application.add_handler(CommandHandler("scouts", self._list_scouts_command))
         self.application.add_handler(CallbackQueryHandler(self._button_callback))
 
@@ -39,9 +40,17 @@ class TelegramChannel(BaseChannel):
         if self.application.job_queue:
             self.application.job_queue.run_repeating(self.check_pending_posts, interval=60, first=10)
 
+        from telegram.error import Conflict
+
         await self.application.initialize()
         await self.application.start()
-        await self.application.updater.start_polling()
+        try:
+            await self.application.updater.start_polling()
+        except Conflict:
+            print("\n[red]Error: Another instance of the bot is already running.[/red]")
+            print("Please stop the other instance first.")
+            logger.error("Telegram Conflict: Another bot instance is running.")
+            return
 
         print("🤖 Telegram Bot is running...")
         logger.info("Telegram Bot started polling.")
@@ -99,9 +108,32 @@ class TelegramChannel(BaseChannel):
             "👋 Welcome to InfluencerPy Bot!\n\n"
             "I will notify you when new posts are ready for review.\n"
             "Commands:\n"
+            "/help - Show available commands\n"
             "/check - Check for pending posts\n"
             "/scouts - List and run scouts"
         )
+
+    async def _help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show available commands."""
+        await update.message.reply_text(
+            "📚 **InfluencerPy Bot Help**\n\n"
+            "Here are the commands you can use:\n\n"
+            "🔹 /start - Welcome message and status\n"
+            "🔹 /check - Force check for pending reviews\n"
+            "🔹 /scouts - List your scouts and run them manually\n"
+            "🔹 /help - Show this help message\n\n"
+            "You will also receive automatic notifications when a scout generates a new draft.",
+            parse_mode="Markdown"
+        )
+
+    async def _check_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Force check for pending reviews and report status."""
+        count = await self.check_pending_posts(context)
+        if count == 0:
+            await update.message.reply_text("✅ No pending reviews found at the moment.")
+        else:
+            # check_pending_posts already sent the cards
+            pass
 
     async def _list_scouts_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """List all scouts with Run buttons."""
@@ -160,6 +192,8 @@ class TelegramChannel(BaseChannel):
                 post.status = "reviewing"
                 session.add(post)
                 session.commit()
+            
+            return len(posts)
 
     async def _button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle button clicks."""

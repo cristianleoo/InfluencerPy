@@ -5,7 +5,9 @@ from datetime import datetime
 from sqlmodel import select
 
 from strands import Agent
-from strands_tools import rss, http_request
+from influencerpy.tools.rss_tool import rss
+from influencerpy.tools.http_tool import http_request
+from influencerpy.tools.image_generation import generate_image_stability
 from influencerpy.tools.search import google_search
 from influencerpy.tools.reddit import reddit
 from influencerpy.tools.arxiv_tool import arxiv_search
@@ -94,7 +96,7 @@ class ScoutManager:
         """Get a scout by name."""
         return self.session.exec(select(ScoutModel).where(ScoutModel.name == name)).first()
 
-    def run_scout(self, scout: ScoutModel, limit: int = 10) -> List[ContentItem]:
+    def run_scout(self, scout: ScoutModel, limit: int = 10, override_query: str = None, override_config: dict = None) -> List[ContentItem]:
         """Execute a scout to fetch content."""
         logger = get_scout_logger(scout.name)
         logger.info(f"Starting scout run: {scout.name}")
@@ -115,6 +117,12 @@ class ScoutManager:
             
         try:
             config = json.loads(scout.config_json)
+            
+            # Apply overrides
+            if override_config:
+                config.update(override_config)
+                logger.info(f"Applied config overrides: {override_config}")
+                
             items = []
             
             # Check for tools
@@ -132,6 +140,23 @@ class ScoutManager:
                     agent_tools.append(reddit)
                 if "arxiv" in tools_config:
                     agent_tools.append(arxiv_search)
+                
+                # Check for image generation
+                if config.get("image_generation"):
+                    agent_tools.append(generate_image_stability)
+
+                # Check for meta scout (Agents as Tools)
+                if scout.type == "meta":
+                    from influencerpy.core.meta_scout import create_scout_tool
+                    child_scout_names = config.get("child_scouts", [])
+                    for name in child_scout_names:
+                        child_scout = self.get_scout(name)
+                        if child_scout:
+                            # Create a tool for this scout
+                            # Pass self (ScoutManager) to the factory
+                            tool_func = create_scout_tool(child_scout, self)
+                            agent_tools.append(tool_func)
+                            logger.info(f"Added child scout tool: {tool_func.tool_name}")
                     
                 if agent_tools:
                     logger.info(f"Initializing agent with tools: {[t.tool_name for t in agent_tools]}")
@@ -167,21 +192,41 @@ class ScoutManager:
                             callback_handler=null_callback_handler()
                         )
                         
-                        query = config.get("query")
+                        query = override_query or config.get("query")
                         url = config.get("url")
                         feeds = config.get("feeds", [])
                         subreddits = config.get("subreddits", [])
                         
                         if url:
                             goal = f"Analyze the content at: {url}"
+                            if query:
+                                goal += f" Focus on: '{query}'."
                         elif feeds:
                             feed_list = "\n- ".join(feeds)
                             goal = f"Find interesting content from the following RSS feeds:\n{feed_list}\n\nUse the 'rss' tool with action='fetch' to read these feeds."
+                            if query:
+                                goal += f" Filter for content related to: '{query}'."
                         elif subreddits:
                             sub_list = ", ".join(subreddits)
                             goal = f"Find interesting content from the following subreddits: {sub_list}. Use the 'reddit' tool."
+                            if query:
+                                goal += f" Filter for content related to: '{query}'."
                         elif "arxiv" in tools_config:
-                            goal = f"Find research papers about: \"{query or 'latest research'}\". Use the 'arxiv_search' tool."
+                            date_filter = config.get("date_filter")
+                            days_back_map = {
+                                "today": 1,
+                                "week": 7,
+                                "month": 30
+                            }
+                            days = days_back_map.get(date_filter)
+                            
+                            if days:
+                                goal = f"Find research papers about: \"{query or 'latest research'}\" published within the last {days} days. Use the 'arxiv_search' tool with days_back={days}."
+                            else:
+                                goal = f"Find research papers about: \"{query or 'latest research'}\". Use the 'arxiv_search' tool."
+                        elif scout.type == "meta":
+                            orchestration_prompt = config.get("orchestration_prompt", "Coordinate the child scouts to find interesting content.")
+                            goal = f"Orchestrate the child scouts to: {orchestration_prompt}. Use the available scout tools."
                         else:
                             goal = f"Find interesting content about: \"{query or 'latest news'}\""
                             
@@ -199,6 +244,18 @@ class ScoutManager:
                         
                         Output ONLY valid JSON.
                         """
+                        
+                        if config.get("image_generation"):
+                            prompt += """
+                            
+                            ALSO: Generate an image that represents the most interesting content you found.
+                            Use the 'generate_image_stability' tool.
+                            The image should be high quality and relevant to the content.
+                            
+                            In your JSON output, add an "image_path" field to the item that corresponds to the generated image.
+                            The tool will save the image and return the path (or you can infer it from the tool output).
+                            If no image was generated, omit the field.
+                            """
                         
                         logger.info("Executing agent...")
                         response = agent(prompt)
