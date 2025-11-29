@@ -279,6 +279,21 @@ def _review_pending_flow():
 
 
 def _ensure_env_file():
+    if ENV_FILE.exists() and ENV_FILE.is_dir():
+        console.print("[bold red]Error: .env is a directory![/bold red]")
+        console.print(
+            "[yellow]This usually happens with Docker if you mounted a volume incorrectly.[/yellow]"
+        )
+        console.print(
+            "Please ensure you are mounting the configuration directory correctly."
+        )
+        import sys
+
+        sys.exit(1)
+
+    if not ENV_FILE.parent.exists():
+        ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+
     if not os.path.exists(ENV_FILE):
         with open(ENV_FILE, "w") as f:
             f.write("")
@@ -780,6 +795,7 @@ def _create_scout_flow(manager):
             ).unsafe_ask()
             with console.status("Validating subreddit..."):
                 try:
+                    from influencerpy.tools.reddit import reddit
                     result = reddit(subreddit=subreddit, limit=1)
                     if isinstance(result, list) and len(result) > 0:
                         config["subreddits"] = [subreddit]
@@ -959,34 +975,132 @@ def _create_scout_flow(manager):
 
 
 @app.command()
+def setup():
+    """Run the complete setup wizard (AI & Credentials)."""
+    _run_full_setup()
+
+
+def _run_full_setup():
+    """Interactive wizard to setup AI configuration and credentials."""
+    print_header(clear_screen=True)
+    console.print(
+        Panel(
+            "[bold cyan]InfluencerPy Setup Wizard[/bold cyan]\n\n"
+            "Let's get you set up with AI preferences and credentials.\n"
+            "You can skip any step and configure it later.",
+            border_style="cyan",
+        )
+    )
+
+    config_manager = ConfigManager()
+    config_manager.ensure_config_exists()
+
+    # 1. AI Preferences
+    console.print("\n[bold]Step 1: AI Preferences[/bold]")
+    current_provider = config_manager.get("ai.default_provider", "gemini")
+    provider = questionary.select(
+        "Select Default AI Provider:",
+        choices=["gemini", "anthropic"],
+        default=current_provider,
+    ).unsafe_ask()
+    config_manager.set("ai.default_provider", provider)
+
+    if provider == "gemini":
+        current_model = config_manager.get(
+            "ai.providers.gemini.default_model", "gemini-2.5-flash"
+        )
+        model_id = questionary.text(
+            "Default Gemini Model ID:", default=current_model
+        ).unsafe_ask()
+        config_manager.set("ai.providers.gemini.default_model", model_id)
+
+        # Ask for API Key
+        is_key_setup = bool(os.getenv("GEMINI_API_KEY"))
+        msg = (
+            "Configure Gemini API Key?"
+            if is_key_setup
+            else "Set up Gemini API Key now?"
+        )
+        if questionary.confirm(msg, default=not is_key_setup).unsafe_ask():
+            _setup_gemini_credentials()
+
+    elif provider == "anthropic":
+        current_model = config_manager.get(
+            "ai.providers.anthropic.default_model", "claude-3-opus"
+        )
+        model_id = questionary.text(
+            "Default Claude Model ID:", default=current_model
+        ).unsafe_ask()
+        config_manager.set("ai.providers.anthropic.default_model", model_id)
+
+        # Ask for API Key
+        is_key_setup = bool(os.getenv("ANTHROPIC_API_KEY"))
+        msg = (
+            "Configure Anthropic API Key?"
+            if is_key_setup
+            else "Set up Anthropic API Key now?"
+        )
+        if questionary.confirm(msg, default=not is_key_setup).unsafe_ask():
+            _setup_anthropic_credentials()
+
+    # 2. Social Platforms
+    console.print("\n[bold]Step 2: Social Platforms[/bold]")
+
+    # X (Twitter)
+    is_x_setup = bool(os.getenv("X_API_KEY"))
+    msg = (
+        "Configure X (Twitter) credentials?"
+        if is_x_setup
+        else "Set up X (Twitter) credentials now? (Required for auto-posting)"
+    )
+
+    if questionary.confirm(msg, default=not is_x_setup).unsafe_ask():
+        _setup_x_credentials()
+
+    # Telegram
+    is_tg_setup = bool(os.getenv("TELEGRAM_BOT_TOKEN"))
+    msg = (
+        "Configure Telegram credentials?"
+        if is_tg_setup
+        else "Set up Telegram credentials now? (Recommended for control)"
+    )
+
+    if questionary.confirm(msg, default=not is_tg_setup).unsafe_ask():
+        _setup_telegram_credentials()
+
+    # 3. Optional Tools
+    console.print("\n[bold]Step 3: Optional Tools[/bold]")
+
+    if not os.getenv("STABILITY_API_KEY"):
+        if questionary.confirm(
+            "Set up Stability AI (Image Generation)?"
+        ).unsafe_ask():
+            _setup_stability_credentials()
+
+    if not os.getenv("LANGFUSE_PUBLIC_KEY"):
+        if questionary.confirm("Set up Langfuse (Tracing/Observability)?").unsafe_ask():
+            _setup_langfuse_credentials()
+
+    console.print("\n[green]✨ Setup complete! You are ready to go.[/green]")
+    time.sleep(1.5)
+
+
+@app.command()
 def init():
     """Initialize the database and configuration."""
     create_db_and_tables()
     console.print("[green]Database initialized successfully![/green]")
 
-    console.print("[bold]Optional Credential Setup[/bold]\n")
-
-    console.print("InfluencerPy can automatically post to X (Twitter).")
-    if questionary.confirm(
-        "Do you want to set up X credentials now? (Required for auto-posting)"
-    ).unsafe_ask():
-        _setup_x_credentials()
-
-    console.print(
-        "\nInfluencerPy can send drafts to Telegram for your review before posting."
-    )
-    if questionary.confirm(
-        "Do you want to set up Telegram credentials now? (Recommended for control)"
-    ).unsafe_ask():
-        _setup_telegram_credentials()
-
-    console.print("\n[green]Initialization complete![/green]")
+    if questionary.confirm("Run the full setup wizard now?").unsafe_ask():
+        _run_full_setup()
+    else:
+        console.print("[green]Initialization complete![/green]")
 
 
 @app.command()
 def configure():
-    """Update credentials interactively."""
-    _setup_credentials()
+    """Update settings and credentials."""
+    _run_full_setup()
 
 
 def _run_startup_checks():
@@ -2119,7 +2233,7 @@ def main(ctx: typer.Context):
                 "[bold yellow]Welcome! It looks like your first time here.[/bold yellow]"
             )
             if questionary.confirm("Do you want to run the setup wizard?").unsafe_ask():
-                _setup_credentials()
+                _run_full_setup()
                 load_dotenv(override=True)
 
         # ... (rest of main)

@@ -27,4 +27,3 @@ ENV PYTHONUNBUFFERED=1
 
 # Default entrypoint
 ENTRYPOINT ["influencerpy"]
-

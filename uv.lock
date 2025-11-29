@@ -1,4 +1,5 @@
 version = 1
+revision = 1
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -1065,7 +1066,6 @@ dependencies = [
     { name = "google-generativeai" },
     { name = "langfuse" },
     { name = "mkdocs-material" },
-    { name = "nest-asyncio" },
     { name = "pyfiglet" },
     { name = "python-dotenv" },
     { name = "python-telegram-bot" },
@@ -1087,7 +1087,6 @@ requires-dist = [
     { name = "google-generativeai" },
     { name = "langfuse" },
     { name = "mkdocs-material" },
-    { name = "nest-asyncio" },
     { name = "pyfiglet" },
     { name = "python-dotenv" },
     { name = "python-telegram-bot" },

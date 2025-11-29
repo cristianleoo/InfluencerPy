@@ -15,6 +15,12 @@
 
 ---
 
+---
+
+
+
+---
+
 **InfluencerPy** is an intelligent CLI agent that autonomously discovers, curates, and publishes content to social media. Unlike basic scheduling tools, it uses **AI Scouts** to research topics, learn from your feedback, and draft high-quality posts that sound like you.
 
 ## ✨ Features
@@ -102,28 +108,36 @@ pip install -e .
 
 You can also run InfluencerPy using Docker. This is recommended for long-running bots.
 
-1. **Build the image:**
+1. **Clone the repository:**
+
+   ```bash
+   git clone https://github.com/cristianleoo/influencerpy.git
+   cd influencerpy
+   ```
+
+2. **Build the image:**
+
    ```bash
    docker build -t influencerpy .
    ```
 
-2. **Run interactively (for configuration):**
+3. **Run interactively (for configuration):**
+
+   We simply mount the `.influencerpy` directory to persist configuration.
+
    ```bash
    docker run -it --rm \
      -v $(pwd)/.influencerpy:/app/.influencerpy \
-     -v $(pwd)/.env:/app/.env \
      influencerpy
    ```
 
-   *Note: Create an empty .env file first if it doesn't exist: `touch .env`*
+4. **Run the bot (detached):**
 
-3. **Run the bot (detached):**
    ```bash
    docker run -d \
      --name influencerpy-bot \
      --restart unless-stopped \
      -v $(pwd)/.influencerpy:/app/.influencerpy \
-     -v $(pwd)/.env:/app/.env \
      influencerpy bot
    ```
 
