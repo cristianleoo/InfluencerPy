@@ -3,6 +3,7 @@ site_description: Premium Social Media Automation CLI
 repo_url: https://github.com/cristianleoo/InfluencerPy
 
 theme:
+  name: material
   icon:
     logo: material/robot-outline
     repo: fontawesome/brands/github
@@ -53,6 +54,7 @@ theme:
     - content.tabs.link
 
 
+extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/cristianleoo/InfluencerPy
