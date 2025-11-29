@@ -1,0 +1,17 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env
+.DS_Store
+.influencerpy/
+*.egg-info/
+.git/
+.pytest_cache/
+.coverage
+htmlcov/
+site/
+

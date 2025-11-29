@@ -46,13 +46,86 @@ Create configurable agents that patrol the web for you:
 
 ## 🚀 Installation
 
-Ensure you have Python 3.9 or higher.
+Ensure you have Python 3.11 or higher.
+
+### 🚀 Option 1: uv (Blazing Fast)
+
+[uv](https://github.com/astral-sh/uv) is an extremely fast Python package installer and resolver.
+
+```bash
+# Install directly from GitHub
+uv tool install git+https://github.com/cristianleoo/influencerpy.git
+
+# Run it
+influencerpy
+```
+
+### 📦 Option 2: pipx (Recommended for Users)
+
+If you just want to use the tool anywhere on your system without worrying about dependencies, use [pipx](https://pypa.github.io/pipx/):
+
+```bash
+# Install directly from GitHub
+pipx install git+https://github.com/cristianleoo/influencerpy.git
+
+# Run it from anywhere
+influencerpy
+```
+
+### 🐍 Option 3: pip (Standard)
+
+Standard installation in a virtual environment:
+
+```bash
+git clone https://github.com/cristianleoo/influencerpy.git
+cd influencerpy
+
+# Create and activate virtual environment
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+
+# Install
+pip install .
+```
+
+### 🛠️ Option 4: Development (Editable)
+
+If you want to modify the code:
 
 ```bash
 git clone https://github.com/cristianleoo/influencerpy.git
 cd influencerpy
 pip install -e .
 ```
+
+### 🐳 Option 5: Docker
+
+You can also run InfluencerPy using Docker. This is recommended for long-running bots.
+
+1. **Build the image:**
+   ```bash
+   docker build -t influencerpy .
+   ```
+
+2. **Run interactively (for configuration):**
+   ```bash
+   docker run -it --rm \
+     -v $(pwd)/.influencerpy:/app/.influencerpy \
+     -v $(pwd)/.env:/app/.env \
+     influencerpy
+   ```
+
+   *Note: Create an empty .env file first if it doesn't exist: `touch .env`*
+
+3. **Run the bot (detached):**
+   ```bash
+   docker run -d \
+     --name influencerpy-bot \
+     --restart unless-stopped \
+     -v $(pwd)/.influencerpy:/app/.influencerpy \
+     -v $(pwd)/.env:/app/.env \
+     influencerpy bot
+   ```
 
 ---
 

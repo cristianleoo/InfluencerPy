@@ -13,13 +13,12 @@ authors = [
   { name = "Cristian Leo", email = "cristianleo120@gmail.com" },
 ]
 dependencies = [
-  "typer[all]",
+  "typer",
   "tweepy",
   "python-telegram-bot",
   "python-dotenv",
   "rich",
   "sqlmodel",
-  "feedparser",
   "requests",
   "google-generativeai",
   "questionary",
@@ -32,6 +31,8 @@ dependencies = [
   "strands-agents[anthropic]",
   "strands-agents[gemini]",
   "strands-agents[otel]",
+  "strands-agents-tools[rss]",
+  "strands-agents-tools[local_chromium_browser]",
   "langfuse",
 
 ]
