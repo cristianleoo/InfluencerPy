@@ -55,6 +55,14 @@ By default, InfluencerPy uses **Gemini Pro** (via Strands). You can customize th
 3.  Set a specific Model ID (e.g., `gemini-2.5-flash` for speed, or `gemini-1.5-pro` for reasoning).
 4.  Adjust the Temperature (default `0.7`). Higher values make posts more creative; lower values make them more factual.
 
+### 4. Optional: Telemetry (Langfuse)
+
+To trace and debug your Scout's AI reasoning, you can enable [Langfuse](https://langfuse.com/) integration.
+
+1.  Select **Configure AI Settings** -> **Langfuse (Tracing)** from the menu.
+2.  Enter your **Host**, **Public Key**, and **Secret Key**.
+3.  This setting is **global**: once enabled, all Scouts will report traces to your Langfuse project.
+
 ## Next Steps
 
 Once installed and configured, you are ready to create your first Scout!

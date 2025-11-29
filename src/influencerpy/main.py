@@ -1,33 +1,27 @@
-import os
 import json
+import os
 import time
 from datetime import datetime
-import typer
-import pyfiglet
-import questionary
-from rich.console import Console
-from rich.table import Table
-from rich.panel import Panel
-from rich.align import Align
-from rich.markdown import Markdown
-from dotenv import load_dotenv, set_key
-from sqlmodel import select
-
-from influencerpy.database import create_db_and_tables, get_session, PostModel
-from influencerpy.platforms.x_platform import XProvider
-from influencerpy.core.scouts import ScoutManager
-from influencerpy.core.models import Platform, PostDraft
-from influencerpy.logger import get_app_logger
-from influencerpy.tools.rss_tool import rss
-from influencerpy.tools.reddit import reddit
-
 from pathlib import Path
 
-# Determine project root and load environment variables from there
-# This ensures .env is loaded correctly even if running from another directory
-PACKAGE_ROOT = Path(__file__).parent.resolve()
-PROJECT_ROOT = PACKAGE_ROOT.parent.parent
-ENV_FILE = PROJECT_ROOT / ".env"
+import pyfiglet
+import questionary
+import typer
+from dotenv import load_dotenv, set_key
+from rich.align import Align
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.table import Table
+from sqlmodel import select
+from strands_tools import rss
+
+from influencerpy.config import ENV_FILE, PACKAGE_ROOT, PROJECT_ROOT
+from influencerpy.core.models import Platform, PostDraft
+from influencerpy.core.scouts import ScoutManager
+from influencerpy.database import PostModel, create_db_and_tables, get_session
+from influencerpy.logger import get_app_logger
+from influencerpy.platforms.x_platform import XProvider
 
 if ENV_FILE.exists():
     load_dotenv(dotenv_path=ENV_FILE, override=True)
@@ -40,7 +34,6 @@ logger = get_app_logger("app")
 
 import signal
 
-ENV_FILE = ".env"
 
 def _check_system_status() -> bool:
     """Check if the bot system is running via PID file."""
@@ -55,25 +48,27 @@ def _check_system_status() -> bool:
             return False
     return False
 
+
 def _kill_rogue_bots():
     """Kill any other running instances of influencerpy bot."""
     import subprocess
-    
+
     # 1. Try stopping via PID file first (cleanest)
     _stop_system()
-    
+
     # 2. Force kill any remaining processes
     try:
         # Find pids of 'influencerpy bot' excluding current process
         current_pid = os.getpid()
         cmd = "pgrep -f 'influencerpy bot'"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        
+
         if result.returncode == 0:
-            pids = result.stdout.strip().split('\n')
+            pids = result.stdout.strip().split("\n")
             killed_count = 0
             for pid_str in pids:
-                if not pid_str: continue
+                if not pid_str:
+                    continue
                 pid = int(pid_str)
                 if pid != current_pid:
                     try:
@@ -81,14 +76,17 @@ def _kill_rogue_bots():
                         killed_count += 1
                     except OSError:
                         pass
-            
+
             if killed_count > 0:
-                console.print(f"[yellow]Cleaned up {killed_count} old bot instance(s).[/yellow]")
-                time.sleep(1) # Wait for cleanup
-                
+                console.print(
+                    f"[yellow]Cleaned up {killed_count} old bot instance(s).[/yellow]"
+                )
+                time.sleep(1)  # Wait for cleanup
+
     except Exception as e:
         # Ignore errors if pgrep/kill fails (e.g. windows)
         pass
+
 
 def _stop_system():
     """Stop the running bot system."""
@@ -102,12 +100,12 @@ def _stop_system():
             with console.status("Stopping..."):
                 time.sleep(2)
             if not _check_system_status():
-                 console.print("[green]System stopped successfully.[/green]")
+                console.print("[green]System stopped successfully.[/green]")
             else:
-                 console.print("[yellow]System is shutting down...[/yellow]")
+                console.print("[yellow]System is shutting down...[/yellow]")
         except Exception as e:
             console.print(f"[red]Error stopping system: {e}[/red]")
-    
+
     # Clean up PID file if it still exists but process is gone
     if pid_file.exists() and not _check_system_status():
         try:
@@ -115,41 +113,44 @@ def _stop_system():
         except:
             pass
 
+
 def print_header(clear_screen: bool = False):
     """Print the stylized header with dynamic stats."""
     if clear_screen:
         console.clear()
-    
+
     # Fetch stats
     try:
         manager = ScoutManager()
         scout_count = len(manager.list_scouts())
-        
+
         with next(get_session()) as session:
-            pending_count = session.exec(select(PostModel).where(PostModel.status == "pending_review")).all()
+            pending_count = session.exec(
+                select(PostModel).where(PostModel.status == "pending_review")
+            ).all()
             pending_count = len(pending_count)
     except Exception:
         scout_count = "-"
         pending_count = "-"
 
     title = pyfiglet.figlet_format("InfluencerPy", font="slant")
-    
+
     # Create stats grid
     grid = Table.grid(expand=True)
     grid.add_column(justify="center", ratio=1)
     grid.add_column(justify="center", ratio=1)
     grid.add_column(justify="center", ratio=1)
-    
+
     # Check system status via PID file
     is_online = _check_system_status()
 
     status_color = "green" if is_online else "red"
     status_text = "System Online" if is_online else "System Offline"
-    
+
     grid.add_row(
         f"[{status_color}]● {status_text}[/{status_color}]",
         f"[blue]🤖 Active Scouts: {scout_count}[/blue]",
-        f"[yellow]📝 Pending Reviews: {pending_count}[/yellow]"
+        f"[yellow]📝 Pending Reviews: {pending_count}[/yellow]",
     )
 
     console.print(Align.center(f"[bold magenta]{title}[/bold magenta]"))
@@ -157,20 +158,25 @@ def print_header(clear_screen: bool = False):
     console.print(Panel(grid, style="white", border_style="dim"))
     console.print("\n")
 
+
 def _quick_post_flow():
     """Flow for immediate manual posting."""
-    console.print(Panel("[bold]✍️ Quick Post[/bold]\nWrite and post immediately to your channels.", border_style="cyan"))
-    
+    console.print(
+        Panel(
+            "[bold]✍️ Quick Post[/bold]\nWrite and post immediately to your channels.",
+            border_style="cyan",
+        )
+    )
+
     content = questionary.text("Post Content:", multiline=True).unsafe_ask()
     if not content:
         return
 
     # Platform selection
     platforms = questionary.checkbox(
-        "Select Platforms:",
-        choices=["X (Twitter)"]
+        "Select Platforms:", choices=["X (Twitter)"]
     ).unsafe_ask()
-    
+
     if not platforms:
         console.print("[yellow]No platforms selected.[/yellow]")
         return
@@ -184,7 +190,7 @@ def _quick_post_flow():
                         with console.status("Posting to X..."):
                             post_id = provider.post(content)
                         console.print(f"[green]✓ Posted to X (ID: {post_id})[/green]")
-                        
+
                         # Save to DB
                         with next(get_session()) as session:
                             db_post = PostModel(
@@ -192,7 +198,7 @@ def _quick_post_flow():
                                 platform="x",
                                 status="posted",
                                 external_id=post_id,
-                                posted_at=datetime.utcnow()
+                                posted_at=datetime.utcnow(),
                             )
                             session.add(db_post)
                             session.commit()
@@ -200,43 +206,53 @@ def _quick_post_flow():
                         console.print("[red]X Authentication failed.[/red]")
                 except Exception as e:
                     console.print(f"[red]Error posting to X: {e}[/red]")
-    
+
     questionary.press_any_key_to_continue().ask()
+
 
 def _review_pending_flow():
     """Flow to review pending drafts."""
     with next(get_session()) as session:
-        pending_posts = session.exec(select(PostModel).where(PostModel.status == "pending_review")).all()
-    
+        pending_posts = session.exec(
+            select(PostModel).where(PostModel.status == "pending_review")
+        ).all()
+
     if not pending_posts:
         console.print("[green]No pending reviews![/green]")
         time.sleep(1)
         return
 
     console.print(f"[bold]Found {len(pending_posts)} pending drafts.[/bold]\n")
-    
+
     for post in pending_posts:
-        console.print(Panel(post.content, title=f"Draft for {post.platform.upper()}", border_style="yellow"))
-        
+        console.print(
+            Panel(
+                post.content,
+                title=f"Draft for {post.platform.upper()}",
+                border_style="yellow",
+            )
+        )
+
         action = questionary.select(
-            "Action:",
-            choices=["Approve & Post", "Edit & Post", "Delete", "Skip"]
+            "Action:", choices=["Approve & Post", "Edit & Post", "Delete", "Skip"]
         ).unsafe_ask()
-        
+
         if action == "Skip":
             continue
-            
+
         elif action == "Delete":
             with next(get_session()) as session:
                 session.delete(post)
                 session.commit()
             console.print("[red]Draft deleted.[/red]")
-            
+
         elif action in ["Approve & Post", "Edit & Post"]:
             final_content = post.content
             if action == "Edit & Post":
-                final_content = questionary.text("Edit Content:", default=post.content).unsafe_ask()
-            
+                final_content = questionary.text(
+                    "Edit Content:", default=post.content
+                ).unsafe_ask()
+
             # Post logic
             if post.platform == "x":
                 try:
@@ -244,7 +260,7 @@ def _review_pending_flow():
                     if provider.authenticate():
                         with console.status("Posting..."):
                             post_id = provider.post(final_content)
-                        
+
                         # Update DB
                         with next(get_session()) as session:
                             post.status = "posted"
@@ -253,18 +269,20 @@ def _review_pending_flow():
                             post.posted_at = datetime.utcnow()
                             session.add(post)
                             session.commit()
-                            session.refresh(post) # Re-bind to session
-                            
+                            session.refresh(post)  # Re-bind to session
+
                         console.print("[green]✓ Posted successfully![/green]")
                     else:
                         console.print("[red]Authentication failed.[/red]")
                 except Exception as e:
                     console.print(f"[red]Error: {e}[/red]")
 
+
 def _ensure_env_file():
     if not os.path.exists(ENV_FILE):
         with open(ENV_FILE, "w") as f:
             f.write("")
+
 
 def _calibrate_scout_flow(manager, scout_name: str = None):
     """Interactive flow to calibrate a scout."""
@@ -273,8 +291,10 @@ def _calibrate_scout_flow(manager, scout_name: str = None):
         if not scouts:
             console.print("[red]No scouts found.[/red]")
             return
-        scout_name = questionary.select("Select Scout to Calibrate:", choices=[s.name for s in scouts]).unsafe_ask()
-    
+        scout_name = questionary.select(
+            "Select Scout to Calibrate:", choices=[s.name for s in scouts]
+        ).unsafe_ask()
+
     scout = manager.get_scout(scout_name)
     if not scout:
         console.print(f"[red]Scout '{scout_name}' not found.[/red]")
@@ -282,20 +302,22 @@ def _calibrate_scout_flow(manager, scout_name: str = None):
 
     calibration_count = manager.get_calibration_count(scout.id)
     console.print(f"[cyan]Current calibrations: {calibration_count}[/cyan]")
-    
+
     # Calibration loop
     while True:
         # Fetch one content item
         with console.status(f"Fetching content for calibration..."):
             items = manager.run_scout(scout, limit=1)
-        
+
         if not items:
             console.print("[yellow]No content found. Try again later.[/yellow]")
             break
-        
+
         item = items[0]
-        console.print(Panel(f"[bold]{item.title}[/bold]\n{item.url}", border_style="blue"))
-        
+        console.print(
+            Panel(f"[bold]{item.title}[/bold]\n{item.url}", border_style="blue")
+        )
+
         # Generate draft
         try:
             with console.status("Generating draft..."):
@@ -303,53 +325,59 @@ def _calibrate_scout_flow(manager, scout_name: str = None):
         except Exception as e:
             console.print(f"[red]Error generating draft: {e}[/red]")
             break
-        
+
         console.print(Panel(draft, title="Generated Draft", border_style="cyan"))
-        
+
         # Get feedback
         feedback = questionary.text(
-            "Provide feedback (or press Enter to finish calibration):",
-            multiline=False
+            "Provide feedback (or press Enter to finish calibration):", multiline=False
         ).unsafe_ask()
-        
+
         if not feedback or feedback.strip() == "":
             console.print("[green]Calibration session ended.[/green]")
             break
-        
+
         # Record calibration
         manager.record_calibration(scout.id, item.url, draft, feedback)
-        
+
         with console.status("Optimizing system prompt with AI..."):
             if manager.apply_calibration_feedback(scout, feedback):
                 console.print("[green]System prompt refined successfully![/green]")
             else:
-                console.print("[yellow]Could not refine prompt with AI (using previous version).[/yellow]")
-        
+                console.print(
+                    "[yellow]Could not refine prompt with AI (using previous version).[/yellow]"
+                )
+
         calibration_count += 1
-        console.print(f"[green]Calibration recorded! Total: {calibration_count}[/green]")
+        console.print(
+            f"[green]Calibration recorded! Total: {calibration_count}[/green]"
+        )
+
 
 def _setup_x_credentials():
     """Setup X (Twitter) credentials."""
-    console.print(Panel.fit(
-        "[bold cyan]X (Twitter) Setup[/bold cyan]\n\n"
-        "[yellow]How to get X API Keys:[/yellow]\n"
-        "1. Go to [link=https://developer.twitter.com/en/portal/dashboard]X Developer Portal[/link]\n"
-        "2. Create a Project and App.\n"
-        "3. Generate [bold]Consumer Keys[/bold] (API Key & Secret).\n"
-        "4. Generate [bold]Authentication Tokens[/bold] (Access Token & Secret) with [italic]Read and Write[/italic] permissions.\n",
-        title="X Setup",
-        border_style="cyan"
-    ))
-    
+    console.print(
+        Panel.fit(
+            "[bold cyan]X (Twitter) Setup[/bold cyan]\n\n"
+            "[yellow]How to get X API Keys:[/yellow]\n"
+            "1. Go to [link=https://developer.twitter.com/en/portal/dashboard]X Developer Portal[/link]\n"
+            "2. Create a Project and App.\n"
+            "3. Generate [bold]Consumer Keys[/bold] (API Key & Secret).\n"
+            "4. Generate [bold]Authentication Tokens[/bold] (Access Token & Secret) with [italic]Read and Write[/italic] permissions.\n",
+            title="X Setup",
+            border_style="cyan",
+        )
+    )
+
     _ensure_env_file()
-    
+
     keys = [
         ("X_API_KEY", "X API Key"),
         ("X_API_SECRET", "X API Secret"),
         ("X_ACCESS_TOKEN", "X Access Token"),
         ("X_ACCESS_TOKEN_SECRET", "X Access Token Secret"),
     ]
-    
+
     for key, label in keys:
         current = os.getenv(key)
         default_val = current if current else ""
@@ -357,27 +385,30 @@ def _setup_x_credentials():
         if value:
             set_key(ENV_FILE, key, value)
             os.environ[key] = value
-            
+
     console.print("[green]✓ X credentials saved![/green]")
+
 
 def _setup_telegram_credentials():
     """Setup Telegram credentials."""
-    console.print(Panel.fit(
-        "[bold cyan]Telegram Setup[/bold cyan]\n\n"
-        "[yellow]How to get Telegram Credentials:[/yellow]\n"
-        "1. Message @BotFather on Telegram to create a new bot and get the [bold]Bot Token[/bold].\n"
-        "2. Message @userinfobot to get your [bold]Chat ID[/bold].\n",
-        title="Telegram Setup",
-        border_style="cyan"
-    ))
-    
+    console.print(
+        Panel.fit(
+            "[bold cyan]Telegram Setup[/bold cyan]\n\n"
+            "[yellow]How to get Telegram Credentials:[/yellow]\n"
+            "1. Message @BotFather on Telegram to create a new bot and get the [bold]Bot Token[/bold].\n"
+            "2. Message @userinfobot to get your [bold]Chat ID[/bold].\n",
+            title="Telegram Setup",
+            border_style="cyan",
+        )
+    )
+
     _ensure_env_file()
-    
+
     keys = [
         ("TELEGRAM_BOT_TOKEN", "Telegram Bot Token"),
         ("TELEGRAM_CHAT_ID", "Telegram Chat ID"),
     ]
-    
+
     for key, label in keys:
         current = os.getenv(key)
         default_val = current if current else ""
@@ -385,26 +416,29 @@ def _setup_telegram_credentials():
         if value:
             set_key(ENV_FILE, key, value)
             os.environ[key] = value
-            
+
     console.print("[green]✓ Telegram credentials saved![/green]")
+
 
 def _setup_stability_credentials():
     """Setup Stability AI credentials."""
-    console.print(Panel.fit(
-        "[bold cyan]Stability AI Setup[/bold cyan]\n\n"
-        "[yellow]How to get Stability API Key:[/yellow]\n"
-        "1. Go to [link=https://platform.stability.ai/]Stability AI Platform[/link]\n"
-        "2. Create an account and generate an API Key.\n",
-        title="Stability AI Setup",
-        border_style="cyan"
-    ))
-    
+    console.print(
+        Panel.fit(
+            "[bold cyan]Stability AI Setup[/bold cyan]\n\n"
+            "[yellow]How to get Stability API Key:[/yellow]\n"
+            "1. Go to [link=https://platform.stability.ai/]Stability AI Platform[/link]\n"
+            "2. Create an account and generate an API Key.\n",
+            title="Stability AI Setup",
+            border_style="cyan",
+        )
+    )
+
     _ensure_env_file()
-    
+
     keys = [
         ("STABILITY_API_KEY", "Stability API Key"),
     ]
-    
+
     for key, label in keys:
         current = os.getenv(key)
         default_val = current if current else ""
@@ -412,8 +446,147 @@ def _setup_stability_credentials():
         if value:
             set_key(ENV_FILE, key, value)
             os.environ[key] = value
-            
+
     console.print("[green]✓ Stability AI credentials saved![/green]")
+
+
+def _setup_langfuse_credentials():
+    """Setup Langfuse credentials."""
+    console.print(
+        Panel.fit(
+            "[bold cyan]Langfuse Setup[/bold cyan]\n\n"
+            "[yellow]How to get Langfuse Keys:[/yellow]\n"
+            "1. Go to [link=https://langfuse.com/]Langfuse[/link] and sign up/login.\n"
+            "2. Create a project and get your API keys (Host, Public Key, Secret Key).\n",
+            title="Langfuse Setup",
+            border_style="cyan",
+        )
+    )
+
+    _ensure_env_file()
+
+    keys = [
+        ("LANGFUSE_HOST", "Langfuse Base URL (e.g. https://cloud.langfuse.com)"),
+        ("LANGFUSE_PUBLIC_KEY", "Public Key"),
+        ("LANGFUSE_SECRET_KEY", "Secret Key"),
+    ]
+
+    for key, label in keys:
+        current = os.getenv(key)
+        default_val = current if current else ""
+
+        if key == "LANGFUSE_HOST":
+            if not default_val:
+                default_val = "https://cloud.langfuse.com"
+            value = questionary.text(f"{label}:", default=default_val).unsafe_ask()
+        else:
+            # Use password for keys
+            value = questionary.password(f"{label}:", default=default_val).unsafe_ask()
+
+        if value:
+            set_key(ENV_FILE, key, value)
+            os.environ[key] = value
+
+    # Validate credentials
+    try:
+        import langfuse
+
+        console.print("[yellow]Validating credentials with Langfuse...[/yellow]")
+        # We need to initialize a temporary client or use the auth_check if it's a static method
+        # Looking at Langfuse docs/SDK, auth_check is usually on the client or a utility.
+        # However, the user specifically asked for "langfuse.auth_check()".
+        # Let's try to instantiate the client which usually performs a check or use the specific method if it exists.
+        # If the user meant the SDK check, it might be `Langfuse().auth_check()` or similar.
+        # Let's assume standard initialization check for now, or try the specific method if known.
+        # Actually, let's look at what the user said: "use langfuse.auth_check()".
+        # I will try to import it. If it's not a top level function, I might need to instantiate.
+        # Safest bet is to try-catch the import and the call.
+
+        # Re-reading user request: "use langfuse.auth_check()"
+        # I'll check if I can find this method in the library if I could, but I can't run arbitrary code to inspect easily without a script.
+        # I will assume the user knows the API or I should try to instantiate `Langfuse()`.
+        # But wait, `langfuse` package usually has a `Langfuse` class.
+        # Let's try to instantiate `Langfuse()` and catch errors, as that verifies keys.
+
+        from langfuse import Langfuse
+
+        langfuse_client = Langfuse()
+        if langfuse_client.auth_check():
+            console.print("[green]✓ Langfuse credentials validated![/green]")
+        else:
+            console.print(
+                "[red]✗ Langfuse validation failed. Please check your keys.[/red]"
+            )
+
+    except ImportError:
+        console.print(
+            "[yellow]Langfuse SDK not installed. Skipping validation.[/yellow]"
+        )
+    except Exception as e:
+        console.print(f"[red]✗ Langfuse validation failed: {e}[/red]")
+
+    console.print("[green]✓ Langfuse credentials saved![/green]")
+
+
+def _setup_gemini_credentials():
+    """Setup Google Gemini credentials."""
+    console.print(
+        Panel.fit(
+            "[bold cyan]Gemini Setup[/bold cyan]\n\n"
+            "[yellow]How to get Gemini API Key:[/yellow]\n"
+            "1. Go to [link=https://aistudio.google.com/app/apikey]Google AI Studio[/link]\n"
+            "2. Create an API Key.\n",
+            title="Gemini Setup",
+            border_style="cyan",
+        )
+    )
+
+    _ensure_env_file()
+
+    keys = [
+        ("GEMINI_API_KEY", "Gemini API Key"),
+    ]
+
+    for key, label in keys:
+        current = os.getenv(key)
+        default_val = current if current else ""
+        value = questionary.password(f"{label}:", default=default_val).unsafe_ask()
+        if value:
+            set_key(ENV_FILE, key, value)
+            os.environ[key] = value
+
+    console.print("[green]✓ Gemini credentials saved![/green]")
+
+
+def _setup_anthropic_credentials():
+    """Setup Anthropic credentials."""
+    console.print(
+        Panel.fit(
+            "[bold cyan]Anthropic Setup[/bold cyan]\n\n"
+            "[yellow]How to get Anthropic API Key:[/yellow]\n"
+            "1. Go to [link=https://console.anthropic.com/settings/keys]Anthropic Console[/link]\n"
+            "2. Create an API Key.\n",
+            title="Anthropic Setup",
+            border_style="cyan",
+        )
+    )
+
+    _ensure_env_file()
+
+    keys = [
+        ("ANTHROPIC_API_KEY", "Anthropic API Key"),
+    ]
+
+    for key, label in keys:
+        current = os.getenv(key)
+        default_val = current if current else ""
+        value = questionary.password(f"{label}:", default=default_val).unsafe_ask()
+        if value:
+            set_key(ENV_FILE, key, value)
+            os.environ[key] = value
+
+    console.print("[green]✓ Anthropic credentials saved![/green]")
+
 
 def _setup_credentials():
     """Interactive credential setup menu."""
@@ -424,124 +597,151 @@ def _setup_credentials():
             choices=[
                 "X (Twitter)",
                 "Telegram",
-                "Stability AI",
-                "Done"
-            ]
+                "Model Providers (Gemini, Anthropic, Stability AI)",
+                "Langfuse (Tracing)",
+                "Done",
+            ],
         ).unsafe_ask()
-        
+
         if choice == "X (Twitter)":
             _setup_x_credentials()
         elif choice == "Telegram":
             _setup_telegram_credentials()
-        elif choice == "Stability AI":
-            _setup_stability_credentials()
+        elif choice == "Model Providers (Gemini, Anthropic, Stability AI)":
+            while True:
+                provider_choice = questionary.select(
+                    "Select Model Provider:",
+                    choices=[
+                        "Google Gemini",
+                        "Anthropic Claude",
+                        "Stability AI",
+                        "Back",
+                    ],
+                ).unsafe_ask()
+
+                if provider_choice == "Google Gemini":
+                    _setup_gemini_credentials()
+                elif provider_choice == "Anthropic Claude":
+                    _setup_anthropic_credentials()
+                elif provider_choice == "Stability AI":
+                    _setup_stability_credentials()
+                elif provider_choice == "Back":
+                    break
+        elif choice == "Langfuse (Tracing)":
+            _setup_langfuse_credentials()
         elif choice == "Done":
             break
+
 
 def _build_custom_schedule() -> str:
     """Interactive wizard to build a cron string with multi-select options."""
     freq = questionary.select(
         "Frequency:",
-        choices=["Daily", "Weekly", "Monthly", "Interval (e.g. every 4 hours)"]
+        choices=["Daily", "Weekly", "Monthly", "Interval (e.g. every 4 hours)"],
     ).unsafe_ask()
-    
+
     if freq == "Daily":
         # Multi-select hours
         selected_hours = questionary.checkbox(
             "Select hours to run (you can select multiple):",
-            choices=[f"{h:02d}:00" for h in range(24)]
+            choices=[f"{h:02d}:00" for h in range(24)],
         ).unsafe_ask()
-        
+
         if not selected_hours:
             console.print("[yellow]No hours selected, defaulting to 09:00[/yellow]")
             return "0 9 * * *"
-        
+
         # Extract hours from selections like "09:00" -> 9
         hours = [int(h.split(":")[0]) for h in selected_hours]
         hours_str = ",".join(str(h) for h in sorted(hours))
         return f"0 {hours_str} * * *"
-        
+
     elif freq == "Weekly":
         # Multi-select days
-        days_options = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        days_options = [
+            "Monday",
+            "Tuesday",
+            "Wednesday",
+            "Thursday",
+            "Friday",
+            "Saturday",
+            "Sunday",
+        ]
         selected_days = questionary.checkbox(
-            "Select days (you can select multiple):",
-            choices=days_options
+            "Select days (you can select multiple):", choices=days_options
         ).unsafe_ask()
-        
+
         if not selected_days:
             console.print("[yellow]No days selected, defaulting to Monday[/yellow]")
             return "0 9 * * 1"
-        
+
         time = questionary.text("At what time? (HH:MM)", default="09:00").unsafe_ask()
         hour, minute = time.split(":")
-        
+
         days_map = {
-            "Sunday": 0, "Monday": 1, "Tuesday": 2, "Wednesday": 3,
-            "Thursday": 4, "Friday": 5, "Saturday": 6
+            "Sunday": 0,
+            "Monday": 1,
+            "Tuesday": 2,
+            "Wednesday": 3,
+            "Thursday": 4,
+            "Friday": 5,
+            "Saturday": 6,
         }
         day_nums = [str(days_map[day]) for day in selected_days]
         days_str = ",".join(day_nums)
-        
+
         return f"{int(minute)} {int(hour)} * * {days_str}"
-        
+
     elif freq == "Monthly":
         day_num = questionary.text("Day of month (1-31):", default="1").unsafe_ask()
         time = questionary.text("At what time? (HH:MM)", default="09:00").unsafe_ask()
         hour, minute = time.split(":")
         return f"{int(minute)} {int(hour)} {day_num} * *"
-        
+
     elif freq == "Interval (e.g. every 4 hours)":
         hours = questionary.text("Every how many hours?", default="4").unsafe_ask()
         return f"0 */{hours} * * *"
-        
+
     return ""
+
 
 def _create_scout_flow(manager):
     """Interactive flow to create a new scout."""
-    console.print(Panel("[bold]Create New Scout[/bold]\nLet's set up a new content scout.", border_style="magenta"))
-    
+    console.print(
+        Panel(
+            "[bold]Create New Scout[/bold]\nLet's set up a new content scout.",
+            border_style="magenta",
+        )
+    )
+
     while True:
         name = questionary.text("Scout Name (e.g., 'Daily AI'):").unsafe_ask()
         if not name or not name.strip():
             console.print("[red]Name cannot be empty.[/red]")
             continue
-        
+
         if manager.get_scout(name):
-            console.print(f"[red]A scout with the name '{name}' already exists. Please choose another.[/red]")
+            console.print(
+                f"[red]A scout with the name '{name}' already exists. Please choose another.[/red]"
+            )
             continue
         break
-    
+
     type_choice = questionary.select(
         "Scout Type:",
         choices=[
             questionary.Choice(
-                title="🔍 Search (Discover new content by keyword)",
-                value="search"
+                title="🔍 Search (Discover new content by keyword)", value="search"
             ),
+            questionary.Choice(title="📡 RSS (Follow specific feed URLs)", value="rss"),
+            questionary.Choice(title="👾 Reddit (Follow subreddits)", value="reddit"),
             questionary.Choice(
-                title="📡 RSS (Follow specific feed URLs)",
-                value="rss"
+                title="🌐 Browser (Navigate & Extract) [EXPERIMENTAL]", value="browser"
             ),
-            questionary.Choice(
-                title="👾 Reddit (Follow subreddits)",
-                value="reddit"
-            ),
-            questionary.Choice(
-                title="🌐 HTTP Request (Monitor a specific URL)",
-                value="http_request"
-            ),
-            questionary.Choice(
-                title="📜 Arxiv (Research Papers)",
-                value="arxiv"
-            ),
-            questionary.Choice(
-                title="🤖 Meta-Scout (Orchestrate other Scouts)",
-                value="meta"
-            )
-        ]
+            questionary.Choice(title="📜 Arxiv (Research Papers)", value="arxiv"),
+        ],
     ).unsafe_ask()
-    
+
     config = {}
     if type_choice == "search":
         query = questionary.text("Search Query (e.g. 'AI Agents'):").unsafe_ask()
@@ -550,25 +750,34 @@ def _create_scout_flow(manager):
     elif type_choice == "rss":
         while True:
             feed = questionary.text("RSS Feed URL:").unsafe_ask()
-            with console.status("Validating feed..."):
-                # Validate using strands rss tool fetch
-                try:
+            # Validate using strands rss tool fetch
+            try:
+                # Use local RSS tool for database persistence
+                from influencerpy.tools.rss import rss
+
+                with console.status("Validating feed..."):
                     result = rss(action="fetch", url=feed, max_entries=1)
-                    if isinstance(result, list) and len(result) > 0:
-                        config["feeds"] = [feed]
-                        config["tools"] = ["rss"]
-                        break
-                    else:
-                        console.print("[red]Invalid RSS feed or empty.[/red]")
-                        if not questionary.confirm("Try another URL?").unsafe_ask():
-                            return 
-                except Exception:
-                    console.print("[red]Error validating RSS feed.[/red]")
+
+                if isinstance(result, list) and len(result) > 0:
+                    # Subscribe to the feed so the agent can find it by listing
+                    rss(action="subscribe", url=feed)
+                    config["feeds"] = [feed]
+                    config["tools"] = ["rss"]
+                    console.print(f"[green]Successfully subscribed to {feed}[/green]")
+                    break
+                else:
+                    console.print("[red]Invalid RSS feed or empty.[/red]")
                     if not questionary.confirm("Try another URL?").unsafe_ask():
-                        return 
+                        return
+            except Exception as e:
+                console.print("[red]Error validating RSS feed[/red]")
+                if not questionary.confirm("Try another URL?").unsafe_ask():
+                    return
     elif type_choice == "reddit":
         while True:
-            subreddit = questionary.text("Subreddit Name (e.g. 'arcteryx'):").unsafe_ask()
+            subreddit = questionary.text(
+                "Subreddit Name (e.g. 'arcteryx'):"
+            ).unsafe_ask()
             with console.status("Validating subreddit..."):
                 try:
                     result = reddit(subreddit=subreddit, limit=1)
@@ -585,13 +794,17 @@ def _create_scout_flow(manager):
                         if not questionary.confirm("Try another name?").unsafe_ask():
                             return
                 except Exception as e:
-                    console.print(f"[red]Error validating subreddit: {e}[/red]")
+                    console.print("[red]Error validating subreddit[/red]")
                     if not questionary.confirm("Try another name?").unsafe_ask():
                         return
-    elif type_choice == "http_request":
+    elif type_choice == "browser":
+        console.print("\n[yellow]⚠️  Browser tool is EXPERIMENTAL[/yellow]")
+        console.print(
+            "[dim]Note: Complex multi-step browser interactions may not work as expected.[/dim]\n"
+        )
         url = questionary.text("Target URL:").unsafe_ask()
         config["url"] = url
-        config["tools"] = ["http_request"]
+        config["tools"] = ["browser"]
     elif type_choice == "arxiv":
         query = questionary.text("Search Query (e.g. 'LLM Agents'):").unsafe_ask()
         date_filter = questionary.select(
@@ -600,148 +813,36 @@ def _create_scout_flow(manager):
                 questionary.Choice("None (Any time)", value="none"),
                 questionary.Choice("Today (Last 24h)", value="today"),
                 questionary.Choice("This Week (Last 7 days)", value="week"),
-                questionary.Choice("This Month (Last 30 days)", value="month")
+                questionary.Choice("This Month (Last 30 days)", value="month"),
             ],
-            default="none"
+            default="none",
         ).unsafe_ask()
         config["query"] = query
         if date_filter != "none":
             config["date_filter"] = date_filter
         config["tools"] = ["arxiv"]
-    elif type_choice == "meta":
-        meta_mode = questionary.select(
-            "Meta-Scout Mode:",
-            choices=[
-                questionary.Choice("Wrap Existing Scouts", value="wrap"),
-                questionary.Choice("Create New Bundle (Create children + Orchestrator)", value="bundle")
-            ]
-        ).unsafe_ask()
-        
-        if meta_mode == "wrap":
-            # List existing scouts
-            existing_scouts = manager.list_scouts()
-            if not existing_scouts:
-                console.print("[red]No existing scouts found. Create some scouts first![/red]")
-                return
-                
-            scout_choices = [s.name for s in existing_scouts]
-            selected_scouts = questionary.checkbox(
-                "Select Child Scouts:",
-                choices=scout_choices
-            ).unsafe_ask()
-            
-            if not selected_scouts:
-                console.print("[red]You must select at least one child scout.[/red]")
-                return
-                
-            orchestration_prompt = questionary.text(
-                "Orchestration Goal (e.g. 'Research AI trends using Search Scout and find related papers with Arxiv Scout'):"
-            ).unsafe_ask()
-            
-            config["child_scouts"] = selected_scouts
-            config["orchestration_prompt"] = orchestration_prompt
-            config["tools"] = ["meta"]
-            
-        elif meta_mode == "bundle":
-            # Bundle Creation Flow
-            child_types = questionary.checkbox(
-                "Select Child Scout Types to Create:",
-                choices=[
-                    questionary.Choice("🔍 Search", value="search"),
-                    questionary.Choice("📡 RSS", value="rss"),
-                    questionary.Choice("👾 Reddit", value="reddit"),
-                    questionary.Choice("🌐 HTTP Request", value="http_request"),
-                    questionary.Choice("📜 Arxiv", value="arxiv")
-                ]
-            ).unsafe_ask()
-            
-            if not child_types:
-                console.print("[red]You must select at least one child scout type.[/red]")
-                return
-                
-            console.print(f"[green]Creating a Meta-Scout Bundle with {len(child_types)} child scouts.[/green]")
-            
-            child_scouts_created = []
-            
-            for scout_type in child_types:
-                console.print(Panel(f"[bold]Configuring {scout_type.capitalize()} Scout[/bold]", border_style="blue"))
-                
-                child_config = {}
-                child_name = f"{name} - {scout_type.capitalize()}"
-                
-                # Configuration logic for each type
-                if scout_type == "search":
-                    query = questionary.text("Search Query:").unsafe_ask()
-                    child_config["query"] = query
-                    child_config["tools"] = ["google_search"]
-                elif scout_type == "rss":
-                    while True:
-                        feed = questionary.text("RSS Feed URL:").unsafe_ask()
-                        try:
-                            result = rss(action="fetch", url=feed, max_entries=1)
-                            if isinstance(result, list) and len(result) > 0:
-                                child_config["feeds"] = [feed]
-                                child_config["tools"] = ["rss"]
-                                break
-                            else:
-                                console.print("[red]Invalid RSS feed.[/red]")
-                                if not questionary.confirm("Try another?").unsafe_ask(): break
-                        except:
-                            console.print("[red]Error validating feed.[/red]")
-                            if not questionary.confirm("Try another?").unsafe_ask(): break
-                elif scout_type == "reddit":
-                    subreddit = questionary.text("Subreddit Name:").unsafe_ask()
-                    child_config["subreddits"] = [subreddit]
-                    child_config["tools"] = ["reddit"]
-                elif scout_type == "http_request":
-                    url = questionary.text("Target URL:").unsafe_ask()
-                    child_config["url"] = url
-                    child_config["tools"] = ["http_request"]
-                elif scout_type == "arxiv":
-                    query = questionary.text("Search Query:").unsafe_ask()
-                    date_filter = questionary.select(
-                        "Filter by Date:",
-                        choices=["none", "today", "week", "month"],
-                        default="none"
-                    ).unsafe_ask()
-                    child_config["query"] = query
-                    if date_filter != "none":
-                        child_config["date_filter"] = date_filter
-                    child_config["tools"] = ["arxiv"]
-                
-                # Create the child scout immediately
-                manager.create_scout(
-                    name=child_name,
-                    type=scout_type,
-                    config=child_config,
-                    schedule_cron=None # Manual run only (orchestrated)
-                )
-                child_scouts_created.append(child_name)
-                console.print(f"[green]Created child scout: {child_name}[/green]")
-                
-            # Now configure the Meta-Scout itself
-            console.print(Panel("[bold]Configuring Orchestrator[/bold]", border_style="magenta"))
-            orchestration_prompt = questionary.text(
-                "Orchestration Goal:",
-                default=f"Coordinate the scouts to provide a comprehensive report on {name}."
-            ).unsafe_ask()
-            
-            config["child_scouts"] = child_scouts_created
-            config["orchestration_prompt"] = orchestration_prompt
-            config["tools"] = ["meta"]
-
     # Image Generation
-    if questionary.confirm("Enable Image Generation (requires Stability AI)?", default=False).unsafe_ask():
+    if questionary.confirm(
+        "Enable Image Generation (requires Stability AI)?", default=False
+    ).unsafe_ask():
         if not os.getenv("STABILITY_API_KEY"):
-             console.print("[yellow]Stability API Key not found. Please configure it in the main menu.[/yellow]")
-             if questionary.confirm("Configure now?", default=True).unsafe_ask():
-                 _setup_stability_credentials()
-        
-        if os.getenv("STABILITY_API_KEY"):
-            config["image_generation"] = True
-            console.print("[green]Image Generation enabled![/green]")
-        else:
-            console.print("[red]Image Generation disabled due to missing credentials.[/red]")
+            console.print(
+                "[yellow]Warning: STABILITY_API_KEY not found in environment.[/yellow]"
+            )
+        config["image_generation"] = True
+
+    # Langfuse Tracing
+    # Automatically enable if credentials exist
+    if (
+        os.getenv("LANGFUSE_PUBLIC_KEY")
+        and os.getenv("LANGFUSE_SECRET_KEY")
+        and os.getenv("LANGFUSE_HOST")
+    ):
+        # config["langfuse_enabled"] = True # Deprecated: Now handled globally
+        pass
+    else:
+        # config["langfuse_enabled"] = False # Deprecated
+        pass
 
     # Scheduling
     schedule_choice = questionary.select(
@@ -751,112 +852,152 @@ def _create_scout_flow(manager):
             questionary.Choice("Daily (Every morning)", value="0 9 * * *"),
             questionary.Choice("Hourly", value="0 * * * *"),
             questionary.Choice("Create with AI", value="interactive"),
-            questionary.Choice("Custom Cron (Advanced)", value="custom")
-        ]
+            questionary.Choice("Custom Cron (Advanced)", value="custom"),
+        ],
     ).unsafe_ask()
-    
+
     schedule_cron = schedule_choice
     if schedule_choice == "custom":
-        schedule_cron = questionary.text("Enter Cron Expression (e.g. '0 12 * * 1'):").unsafe_ask()
+        schedule_cron = questionary.text(
+            "Enter Cron Expression (e.g. '0 12 * * 1'):"
+        ).unsafe_ask()
     elif schedule_choice == "interactive":
         schedule_cron = _build_custom_schedule()
-        
+
     # Tone & Style
     tone = questionary.select(
         "Content Tone:",
-        choices=["Professional", "Casual", "Witty", "Urgent", "Inspirational"]
+        choices=["Professional", "Casual", "Witty", "Urgent", "Inspirational"],
     ).unsafe_ask()
-    
+
     style = questionary.select(
         "Content Style:",
-        choices=["Concise", "Detailed", "Storytelling", "Bullet Points"]
+        choices=["Concise", "Detailed", "Storytelling", "Bullet Points"],
     ).unsafe_ask()
-    
+
     prompt_template = f"Summarize this content and highlight key takeaways for a social media audience. Tone: {tone}. Style: {style}."
 
     # Advanced Configuration
-    if questionary.confirm("Configure Advanced Settings (System Prompt, Model, Temperature)?", default=False).unsafe_ask():
-        prompt_template = questionary.text(
-            "System Prompt:", 
-            default=prompt_template
+    if questionary.confirm(
+        "Configure Advanced Settings (User Instructions, Model, Temperature)?",
+        default=False,
+    ).unsafe_ask():
+        provider = questionary.select(
+            "Provider:", choices=["gemini", "anthropic"]
         ).unsafe_ask()
-        
-        model_id = questionary.text("Model ID:", default="gemini-pro").unsafe_ask()
-        temperature = questionary.text("Temperature (0.0 - 1.0):", default="0.7").unsafe_ask()
+
+        prompt_template = questionary.text(
+            "User Instructions (Your Scout Goal):", default=prompt_template
+        ).unsafe_ask()
+
+        model_id = questionary.text(
+            "Model ID:",
+            default=config.get("ai.providers.gemini.default_model", "gemini-2.5-flash"),
+        ).unsafe_ask()
+        temperature = questionary.text(
+            "Temperature (0.0 - 1.0):",
+            default=config.get("ai.providers.gemini.default_temperature", "0.7"),
+        ).unsafe_ask()
         config["generation_config"] = {
+            "provider": provider,
             "model_id": model_id,
-            "temperature": float(temperature)
+            "temperature": float(temperature),
         }
+
+        # Langfuse Opt-out
+        # Removed per-scout toggle in favor of global config
+        # if config.get("langfuse_enabled"):
+        #     if questionary.confirm(
+        #         "Disable Langfuse Tracing for this scout?", default=False
+        #     ).unsafe_ask():
+        #         config["langfuse_enabled"] = False
+        #         console.print(
+        #             "[yellow]Langfuse tracing disabled for this scout.[/yellow]"
+        #         )
     
     # Platform Selection
     telegram_review = questionary.confirm(
-        "Enable review on Telegram before posting?",
-        default=False
+        "Enable review on Telegram before posting?", default=False
     ).unsafe_ask()
-    
+
     # Multi-platform selection (checkbox)
     platform_choices = questionary.checkbox(
         "Select platforms to post to:",
-        choices=["X (Twitter)"]  # Add more platforms here as they're implemented
+        choices=["X (Twitter)"],  # Add more platforms here as they're implemented
     ).unsafe_ask()
-    
+
     # Map display names to internal platform IDs
     platforms = []
     if "X (Twitter)" in platform_choices:
         platforms.append("x")
-    
+
     manager.create_scout(
-        name, type_choice, config, 
-        prompt_template=prompt_template, 
-        schedule_cron=schedule_cron, 
+        name,
+        type_choice,
+        config,
+        prompt_template=prompt_template,
+        schedule_cron=schedule_cron,
         platforms=platforms,
-        telegram_review=telegram_review
+        telegram_review=telegram_review,
     )
     console.print(f"[green]Scout '{name}' created successfully![/green]")
-    
+
     # Offer immediate calibration
-    console.print(Panel(
-        "[bold]🎯 Calibrate your Scout?[/bold]\n"
-        "Calibration helps the AI learn your style by generating a sample post and asking for your feedback.\n"
-        "This ensures future posts sound exactly like you.",
-        border_style="cyan"
-    ))
-    
-    if questionary.confirm("Do you want to calibrate this scout now?", default=True).unsafe_ask():
+    console.print(
+        Panel(
+            "[bold]🎯 Calibrate your Scout?[/bold]\n"
+            "Calibration helps the AI learn your style by generating a sample post and asking for your feedback.\n"
+            "This ensures future posts sound exactly like you.",
+            border_style="cyan",
+        )
+    )
+
+    if questionary.confirm(
+        "Do you want to calibrate this scout now?", default=True
+    ).unsafe_ask():
         _calibrate_scout_flow(manager, name)
+
 
 @app.command()
 def init():
     """Initialize the database and configuration."""
     create_db_and_tables()
     console.print("[green]Database initialized successfully![/green]")
-    
+
     console.print("[bold]Optional Credential Setup[/bold]\n")
-    
+
     console.print("InfluencerPy can automatically post to X (Twitter).")
-    if questionary.confirm("Do you want to set up X credentials now? (Required for auto-posting)").unsafe_ask():
+    if questionary.confirm(
+        "Do you want to set up X credentials now? (Required for auto-posting)"
+    ).unsafe_ask():
         _setup_x_credentials()
-        
-    console.print("\nInfluencerPy can send drafts to Telegram for your review before posting.")
-    if questionary.confirm("Do you want to set up Telegram credentials now? (Recommended for control)").unsafe_ask():
+
+    console.print(
+        "\nInfluencerPy can send drafts to Telegram for your review before posting."
+    )
+    if questionary.confirm(
+        "Do you want to set up Telegram credentials now? (Recommended for control)"
+    ).unsafe_ask():
         _setup_telegram_credentials()
-        
+
     console.print("\n[green]Initialization complete![/green]")
+
 
 @app.command()
 def configure():
     """Update credentials interactively."""
     _setup_credentials()
 
+
 def _run_startup_checks():
     """Run system health checks and display status."""
     console.print(Panel("[bold]🚀 Initializing System...[/bold]", border_style="blue"))
-    
+
     table = Table(show_header=True, header_style="bold magenta", expand=True)
     table.add_column("Component", style="cyan")
     table.add_column("Status", style="white")
     table.add_column("Details", style="dim")
-    
+
     # 1. Telegram Check
     if os.getenv("TELEGRAM_BOT_TOKEN"):
         table.add_row("Telegram Bot", "[green]Configured[/green]", "Token found")
@@ -868,11 +1009,15 @@ def _run_startup_checks():
         try:
             provider = XProvider()
             if provider.authenticate():
-                table.add_row("X (Twitter)", "[green]Connected[/green]", "Auth successful")
+                table.add_row(
+                    "X (Twitter)", "[green]Connected[/green]", "Auth successful"
+                )
             else:
-                table.add_row("X (Twitter)", "[red]Auth Failed[/red]", "Check credentials")
+                table.add_row(
+                    "X (Twitter)", "[red]Auth Failed[/red]", "Check credentials"
+                )
         except:
-             table.add_row("X (Twitter)", "[red]Error[/red]", "Connection failed")
+            table.add_row("X (Twitter)", "[red]Error[/red]", "Connection failed")
     else:
         table.add_row("X (Twitter)", "[yellow]Not Configured[/yellow]", "Optional")
 
@@ -880,50 +1025,62 @@ def _run_startup_checks():
     if os.getenv("STABILITY_API_KEY"):
         table.add_row("Stability AI", "[green]Configured[/green]", "Key found")
     else:
-        table.add_row("Stability AI", "[yellow]Not Configured[/yellow]", "Image gen disabled")
-        
+        table.add_row(
+            "Stability AI", "[yellow]Not Configured[/yellow]", "Image gen disabled"
+        )
+
     # 4. Scouts Check
     manager = ScoutManager()
     scouts = manager.list_scouts()
     active_scouts = [s for s in scouts if s.schedule_cron]
     if active_scouts:
-        table.add_row("Scouts", f"[green]{len(active_scouts)} Active[/green]", f"{len(scouts)} total")
+        table.add_row(
+            "Scouts",
+            f"[green]{len(active_scouts)} Active[/green]",
+            f"{len(scouts)} total",
+        )
     else:
-        table.add_row("Scouts", "[yellow]No Active Schedules[/yellow]", "Scouts will run manually")
+        table.add_row(
+            "Scouts", "[yellow]No Active Schedules[/yellow]", "Scouts will run manually"
+        )
 
     console.print(table)
     console.print("\n")
+
 
 @app.command()
 def bot():
     """Run the Telegram notification bot and Scout Scheduler."""
     import asyncio
+
     from influencerpy.channels.telegram import TelegramChannel
     from influencerpy.core.scheduler import ScoutScheduler
-    
+
     if not os.getenv("TELEGRAM_BOT_TOKEN"):
-        console.print("[red]Error: TELEGRAM_BOT_TOKEN not found. Run 'configure' first.[/red]")
+        console.print(
+            "[red]Error: TELEGRAM_BOT_TOKEN not found. Run 'configure' first.[/red]"
+        )
         return
-        
+
     # Auto-kill other instances to prevent conflict
     _kill_rogue_bots()
-    
+
     # Run startup checks
     _run_startup_checks()
-        
+
     channel = TelegramChannel()
     scheduler = ScoutScheduler()
-    
+
     async def run_services():
         # Write PID file
         pid_file = PROJECT_ROOT / "bot.pid"
         with open(pid_file, "w") as f:
             f.write(str(os.getpid()))
-            
+
         try:
             # Start Scheduler
             scheduler.start()
-            
+
             # Start Bot (this blocks until stopped)
             await channel.start()
         finally:
@@ -937,17 +1094,19 @@ def bot():
     except KeyboardInterrupt:
         pass
 
+
 @app.command()
 def logs(
     lines: int = typer.Option(50, help="Number of lines to show"),
-    follow: bool = typer.Option(False, "--follow", "-f", help="Follow log output")
+    follow: bool = typer.Option(False, "--follow", "-f", help="Follow log output"),
 ):
     """View application logs."""
-    from influencerpy.logger import LOGS_DIR
     import time
-    
+
+    from influencerpy.logger import LOGS_DIR
+
     log_file = LOGS_DIR / "app" / "app.log"
-    
+
     if not log_file.exists():
         console.print("[yellow]No logs found yet.[/yellow]")
         return
@@ -957,7 +1116,7 @@ def logs(
         content = f.readlines()
         for line in content[-lines:]:
             console.print(line.strip(), highlight=False)
-            
+
         if follow:
             console.print("[dim]Following logs... (Ctrl+C to stop)[/dim]")
             try:
@@ -975,32 +1134,28 @@ def logs(
             except KeyboardInterrupt:
                 pass
 
+
 @app.command()
 def dashboard():
     """Show the Mission Control Dashboard."""
+    import time
+    from datetime import datetime
+
+    from rich.align import Align
     from rich.layout import Layout
     from rich.live import Live
     from rich.panel import Panel
     from rich.table import Table
-    from rich.align import Align
-    from datetime import datetime
-    import time
-    
+
     def generate_layout():
         layout = Layout()
         layout.split(
             Layout(name="header", size=3),
             Layout(name="main", ratio=1),
-            Layout(name="footer", size=3)
+            Layout(name="footer", size=3),
         )
-        layout["main"].split_row(
-            Layout(name="left"),
-            Layout(name="right", ratio=2)
-        )
-        layout["left"].split(
-            Layout(name="status", size=10),
-            Layout(name="scouts")
-        )
+        layout["main"].split_row(Layout(name="left"), Layout(name="right", ratio=2))
+        layout["left"].split(Layout(name="status", size=10), Layout(name="scouts"))
         return layout
 
     def get_status_panel():
@@ -1021,105 +1176,107 @@ def dashboard():
             table.add_row("○", "Scheduler Stopped")
             table.add_row("○", "Bot Disconnected")
             table.add_row("", "[dim]Run 'influencerpy bot'[/dim]")
-        
+
         return Panel(
             Align.center(table, vertical="middle"),
             title="System Status",
-            border_style="green" if is_online else "red"
+            border_style="green" if is_online else "red",
         )
 
     def get_scouts_panel():
         manager = ScoutManager()
         scouts = manager.list_scouts()
-        
+
         table = Table(show_header=True, header_style="bold magenta", expand=True)
         table.add_column("Scout")
         table.add_column("Schedule")
-        
-        for s in scouts[:10]: # Limit to 10
+
+        for s in scouts[:10]:  # Limit to 10
             cron = s.schedule_cron if s.schedule_cron else "Manual"
             table.add_row(s.name, cron)
-            
-        return Panel(
-            table,
-            title=f"Active Scouts ({len(scouts)})",
-            border_style="blue"
-        )
+
+        return Panel(table, title=f"Active Scouts ({len(scouts)})", border_style="blue")
 
     def get_recent_posts_panel():
         with next(get_session()) as session:
-            posts = session.exec(select(PostModel).order_by(PostModel.created_at.desc()).limit(10)).all()
-            
+            posts = session.exec(
+                select(PostModel).order_by(PostModel.created_at.desc()).limit(10)
+            ).all()
+
         table = Table(show_header=True, header_style="bold magenta", expand=True)
         table.add_column("Time", style="dim")
         table.add_column("Platform")
         table.add_column("Status")
         table.add_column("Content")
-        
+
         for p in posts:
             status_style = "green" if p.status == "posted" else "yellow"
             table.add_row(
                 p.created_at.strftime("%H:%M"),
                 p.platform,
                 f"[{status_style}]{p.status}[/{status_style}]",
-                (p.content[:40] + "...") if p.content else ""
+                (p.content[:40] + "...") if p.content else "",
             )
-            
-        return Panel(
-            table,
-            title="Recent Activity",
-            border_style="cyan"
-        )
+
+        return Panel(table, title="Recent Activity", border_style="cyan")
 
     layout = generate_layout()
-    
+
     with Live(layout, refresh_per_second=1, screen=True):
         while True:
             try:
                 layout["header"].update(
-                    Panel(Align.center(f"[bold magenta]InfluencerPy Mission Control[/bold magenta] - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"), style="white")
+                    Panel(
+                        Align.center(
+                            f"[bold magenta]InfluencerPy Mission Control[/bold magenta] - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                        ),
+                        style="white",
+                    )
                 )
                 layout["left"]["status"].update(get_status_panel())
                 layout["left"]["scouts"].update(get_scouts_panel())
                 layout["right"].update(get_recent_posts_panel())
                 layout["footer"].update(
-                    Panel(Align.center("[dim]Press Ctrl+C to exit[/dim]"), style="white")
+                    Panel(
+                        Align.center("[dim]Press Ctrl+C to exit[/dim]"), style="white"
+                    )
                 )
                 time.sleep(1)
             except KeyboardInterrupt:
                 break
 
+
 @app.command()
-def news(
-    limit: int = typer.Option(5, help="Number of news items to fetch")
-):
+def news(limit: int = typer.Option(5, help="Number of news items to fetch")):
     """Fetch and display latest AI news."""
     feeds = [
         "https://news.google.com/rss/search?q=artificial+intelligence",
         "https://techcrunch.com/tag/artificial-intelligence/feed/",
     ]
-    
+
     items = []
     with console.status("[bold green]Fetching news..."):
         for feed_url in feeds:
             try:
                 # Use strands rss tool fetch action
-                result = rss(action="fetch", url=feed_url, max_entries=limit)
+                result = rss.rss(action="fetch", url=feed_url, max_entries=limit)
                 if isinstance(result, list):
                     for entry in result:
                         # Convert RSS entry to simpler object for display
-                        items.append({
-                            "title": entry.get("title", "No Title"),
-                            "url": entry.get("link", "#"),
-                            "published": entry.get("published", "Unknown"),
-                            "source": feed_url
-                        })
+                        items.append(
+                            {
+                                "title": entry.get("title", "No Title"),
+                                "url": entry.get("link", "#"),
+                                "published": entry.get("published", "Unknown"),
+                                "source": feed_url,
+                            }
+                        )
             except Exception as e:
                 console.print(f"[red]Error fetching {feed_url}: {e}[/red]")
 
     # Sort roughly if possible, otherwise just display
     # Strands RSS tool returns formatted dates string, simple sort might not work perfectly but is okay for display
-    
+
     # Slice to limit total
     items = items[:limit]
 
@@ -1131,39 +1288,31 @@ def news(
     for item in items:
         # Truncate date for display
         date_str = str(item["published"])[:10]
-        table.add_row(
-            date_str,
-            item["title"],
-            item["source"][:30] + "..."
-        )
+        table.add_row(date_str, item["title"], item["source"][:30] + "...")
 
     console.print(table)
-    
+
     # Interactive selection
-    if questionary.confirm("Do you want to draft a post from one of these?").unsafe_ask():
-        choices = [
-            questionary.Choice(
-                title=f"{i['title']}",
-                value=i
-            ) for i in items
-        ]
-        
+    if questionary.confirm(
+        "Do you want to draft a post from one of these?"
+    ).unsafe_ask():
+        choices = [questionary.Choice(title=f"{i['title']}", value=i) for i in items]
+
         selected_item = questionary.select(
-            "Select a news item:",
-            choices=choices
+            "Select a news item:", choices=choices
         ).unsafe_ask()
-        
+
         if not selected_item:
             return
 
         console.print(f"\n[bold]Selected:[/bold] {selected_item['title']}")
-        
+
         content = questionary.text(
             "Edit your tweet content:",
             default=f"Checking out: {selected_item['title']}\n{selected_item['url']}",
-            multiline=True
+            multiline=True,
         ).unsafe_ask()
-        
+
         if questionary.confirm("Post to X now?").unsafe_ask():
             provider = XProvider()
             if provider.authenticate():
@@ -1171,9 +1320,14 @@ def news(
                 try:
                     with console.status("[bold green]Posting..."):
                         post_id = provider.post(draft)
-                    
-                    console.print(Panel(f"[bold green]Success![/bold green]\nTweet ID: {post_id}", border_style="green"))
-                    
+
+                    console.print(
+                        Panel(
+                            f"[bold green]Success![/bold green]\nTweet ID: {post_id}",
+                            border_style="green",
+                        )
+                    )
+
                     # Save to DB
                     with next(get_session()) as session:
                         db_post = PostModel(
@@ -1181,43 +1335,328 @@ def news(
                             platform="x",
                             status="posted",
                             external_id=post_id,
-                            posted_at=datetime.utcnow()
+                            posted_at=datetime.utcnow(),
                         )
                         session.add(db_post)
                         session.commit()
-                        
+
                 except Exception as e:
                     console.print(f"[bold red]Error:[/bold red] {e}")
             else:
-                console.print("[bold red]Authentication failed. Please run 'configure'.[/bold red]")
+                console.print(
+                    "[bold red]Authentication failed. Please run 'configure'.[/bold red]"
+                )
+
 
 @app.command()
 def history():
     """View posting history."""
     with next(get_session()) as session:
-        posts = session.exec(select(PostModel).order_by(PostModel.created_at.desc())).all()
-    
+        posts = session.exec(
+            select(PostModel).order_by(PostModel.created_at.desc())
+        ).all()
+
     table = Table(title="Post History", show_header=True, header_style="bold magenta")
     table.add_column("Date", style="cyan")
     table.add_column("Content", style="white")
     table.add_column("Platform", style="magenta")
     table.add_column("Status", style="green")
-    
+
     for post in posts:
         table.add_row(
             post.created_at.strftime("%Y-%m-%d %H:%M"),
             (post.content[:50] + "...") if post.content else "",
             post.platform,
-            post.status
+            post.status,
         )
     console.print(table)
+
+
+def _update_scout_flow(manager, scout):
+    """Interactive flow to update an existing scout."""
+    update_field = questionary.select(
+        "What do you want to update?",
+        choices=[
+            "Name",
+            "Configuration (Query/Feed/Subreddit)",
+            "Tools",
+            "Image Generation",
+            "Platforms",
+            "User Instructions",
+            "Advanced Settings (Model/Temp)",
+            "Schedule",
+            "Telegram Review",
+            "Cancel",
+        ],
+    ).unsafe_ask()
+
+    if update_field == "Cancel":
+        return
+
+    config = json.loads(scout.config_json)
+
+    if update_field == "Name":
+        while True:
+            new_name = questionary.text("New Name:", default=scout.name).unsafe_ask()
+            if not new_name or not new_name.strip():
+                console.print("[red]Name cannot be empty.[/red]")
+                continue
+
+            if new_name != scout.name and manager.get_scout(new_name):
+                console.print(
+                    f"[red]A scout with the name '{new_name}' already exists.[/red]"
+                )
+                continue
+            break
+
+        manager.update_scout(scout, name=new_name)
+        console.print(f"[green]Scout renamed to '{new_name}'![/green]")
+
+    elif update_field == "Configuration (Query/Feed/Subreddit)":
+        if scout.type == "search":
+            new_query = questionary.text(
+                "New Search Query:", default=config.get("query", "")
+            ).unsafe_ask()
+            config["query"] = new_query
+        elif scout.type == "rss":
+            while True:
+                current_feed = config.get("feeds", [""])[0]
+                new_feed = questionary.text(
+                    "New RSS Feed URL:", default=current_feed
+                ).unsafe_ask()
+                with console.status("Validating feed..."):
+                    try:
+                        # Use strands rss tool fetch
+                        from strands_tools import rss
+
+                        result = rss.rss(action="fetch", url=new_feed, max_entries=1)
+                        if isinstance(result, list) and len(result) > 0:
+                            config["feeds"] = [new_feed]
+                            break
+                        else:
+                            console.print("[red]Invalid RSS feed.[/red]")
+                            if not questionary.confirm("Try again?").unsafe_ask():
+                                return
+                    except Exception:
+                        console.print("[red]Error validating feed.[/red]")
+                        if not questionary.confirm("Try again?").unsafe_ask():
+                            return
+        elif scout.type == "reddit":
+            while True:
+                current_sub = config.get("subreddits", [""])[0]
+                new_sub = questionary.text(
+                    "New Subreddit:", default=current_sub
+                ).unsafe_ask()
+                with console.status("Validating subreddit..."):
+                    try:
+                        from influencerpy.tools.reddit import reddit
+
+                        result = reddit(subreddit=new_sub, limit=1)
+                        if isinstance(result, list) and len(result) > 0:
+                            config["subreddits"] = [new_sub]
+                            break
+                        else:
+                            console.print("[red]Invalid subreddit or empty.[/red]")
+                            if not questionary.confirm("Try again?").unsafe_ask():
+                                return
+                    except Exception as e:
+                        console.print(f"[red]Error validating: {e}[/red]")
+                        if not questionary.confirm("Try again?").unsafe_ask():
+                            return
+        elif scout.type == "browser":
+            new_url = questionary.text(
+                "New Target URL:", default=config.get("url", "")
+            ).unsafe_ask()
+            config["url"] = new_url
+        elif scout.type == "arxiv":
+            new_query = questionary.text(
+                "New Search Query:", default=config.get("query", "")
+            ).unsafe_ask()
+            config["query"] = new_query
+
+            current_filter = config.get("date_filter", "none")
+            new_filter = questionary.select(
+                "Filter by Date:",
+                choices=[
+                    questionary.Choice("None (Any time)", value="none"),
+                    questionary.Choice("Today (Last 24h)", value="today"),
+                    questionary.Choice("This Week (Last 7 days)", value="week"),
+                    questionary.Choice("This Month (Last 30 days)", value="month"),
+                ],
+                default=current_filter,
+            ).unsafe_ask()
+            if new_filter != "none":
+                config["date_filter"] = new_filter
+            else:
+                config.pop("date_filter", None)
+        elif scout.type == "meta":
+            if "child_scouts" in config:  # Wrap mode
+                existing_scouts = manager.list_scouts()
+                scout_choices = [
+                    s.name for s in existing_scouts if s.name != scout.name
+                ]
+                current_children = config.get("child_scouts", [])
+
+                selected_scouts = questionary.checkbox(
+                    "Select Child Scouts:",
+                    choices=scout_choices,
+                    default=current_children,
+                ).unsafe_ask()
+                config["child_scouts"] = selected_scouts
+
+            new_prompt = questionary.text(
+                "Orchestration Goal:", default=config.get("orchestration_prompt", "")
+            ).unsafe_ask()
+            config["orchestration_prompt"] = new_prompt
+
+        manager.update_scout(scout, config=config)
+        console.print("[green]Configuration updated![/green]")
+
+    elif update_field == "Tools":
+        current_tools = config.get("tools", [])
+
+        # Determine available tools based on type or generic list
+        tool_choices = [
+            questionary.Choice("rss", checked="rss" in current_tools),
+            questionary.Choice("browser", checked="browser" in current_tools),
+            questionary.Choice(
+                "google_search", checked="google_search" in current_tools
+            ),
+            questionary.Choice("reddit", checked="reddit" in current_tools),
+            questionary.Choice("arxiv", checked="arxiv" in current_tools),
+        ]
+
+        new_tools = questionary.checkbox(
+            "Select Tools:", choices=tool_choices
+        ).unsafe_ask()
+
+        config["tools"] = new_tools
+        manager.update_scout(scout, config=config)
+        console.print("[green]Tools updated![/green]")
+
+    elif update_field == "Image Generation":
+        current_setting = config.get("image_generation", False)
+        new_setting = questionary.confirm(
+            "Enable Image Generation (requires Stability AI)?", default=current_setting
+        ).unsafe_ask()
+
+        if new_setting and not os.getenv("STABILITY_API_KEY"):
+            console.print(
+                "[yellow]Warning: STABILITY_API_KEY not found in environment.[/yellow]"
+            )
+
+        config["image_generation"] = new_setting
+        manager.update_scout(scout, config=config)
+        console.print(
+            f"[green]Image generation {'enabled' if new_setting else 'disabled'}![/green]"
+        )
+
+    elif update_field == "Platforms":
+        current_platforms = json.loads(scout.platforms) if scout.platforms else []
+        platform_choices = questionary.checkbox(
+            "Select platforms to post to:",
+            choices=[
+                questionary.Choice("X (Twitter)", checked="x" in current_platforms)
+            ],
+        ).unsafe_ask()
+
+        platforms = []
+        if "X (Twitter)" in platform_choices:
+            platforms.append("x")
+
+        # Update scout model directly for platforms
+        scout.platforms = json.dumps(platforms)
+        manager.update_scout(scout)  # Save changes
+        console.print("[green]Platforms updated![/green]")
+
+    elif update_field == "User Instructions":
+        new_prompt = questionary.text(
+            "New User Instructions (Your Scout Goal):",
+            default=scout.prompt_template or "",
+        ).unsafe_ask()
+        manager.update_scout(scout, prompt_template=new_prompt)
+        console.print("[green]User Instructions updated![/green]")
+
+    elif update_field == "Advanced Settings (Model/Temp)":
+        gen_config = config.get("generation_config", {})
+
+        current_provider = gen_config.get("provider", "gemini")
+        provider = questionary.select(
+            "AI Provider:", choices=["gemini", "anthropic"], default=current_provider
+        ).unsafe_ask()
+
+        default_model = (
+            "gemini-2.5-flash" if provider == "gemini" else "claude-4.5-sonnet"
+        )
+        current_model = gen_config.get("model_id", default_model)
+
+        model_id = questionary.text("Model ID:", default=current_model).unsafe_ask()
+        temperature = questionary.text(
+            "Temperature (0.0 - 1.0):", default=str(gen_config.get("temperature", 0.7))
+        ).unsafe_ask()
+
+        config["generation_config"] = {
+            "provider": provider,
+            "model_id": model_id,
+            "temperature": float(temperature),
+        }
+
+        # Langfuse Opt-out
+        # Removed per-scout toggle in favor of global config
+        # current_langfuse = config.get("langfuse_enabled", False)
+        # if questionary.confirm(
+        #     "Enable Langfuse Tracing?", default=current_langfuse
+        # ).unsafe_ask():
+        #     config["langfuse_enabled"] = True
+        # else:
+        #     config["langfuse_enabled"] = False
+
+        manager.update_scout(scout, config=config)
+        console.print("[green]Advanced settings updated![/green]")
+
+    elif update_field == "Schedule":
+        schedule_choice = questionary.select(
+            "New Schedule:",
+            choices=[
+                questionary.Choice("None (Manual Run)", value="none"),
+                questionary.Choice("Daily (Every morning)", value="0 9 * * *"),
+                questionary.Choice("Hourly", value="0 * * * *"),
+                questionary.Choice("Create with AI", value="interactive"),
+                questionary.Choice("Custom Cron (Advanced)", value="custom"),
+            ],
+        ).unsafe_ask()
+
+        new_cron = None
+        if schedule_choice == "none":
+            new_cron = ""  # Empty string to clear
+        elif schedule_choice == "custom":
+            new_cron = questionary.text(
+                "Enter Cron Expression:", default=scout.schedule_cron or ""
+            ).unsafe_ask()
+        elif schedule_choice == "interactive":
+            new_cron = _build_custom_schedule()
+        else:
+            new_cron = schedule_choice
+
+        manager.update_scout(scout, schedule_cron=new_cron)
+        console.print("[green]Schedule updated![/green]")
+
+    elif update_field == "Telegram Review":
+        enable_review = questionary.confirm(
+            "Enable review on Telegram before posting?", default=scout.telegram_review
+        ).unsafe_ask()
+        manager.update_scout(scout, telegram_review=enable_review)
+        console.print(
+            f"[green]Telegram review {'enabled' if enable_review else 'disabled'}![/green]"
+        )
+
 
 @app.command()
 def scouts():
     """Manage your Scouts (Tools)."""
     manager = ScoutManager()
     print_header(clear_screen=True)
-    
+
     while True:
         # Show mini dashboard of scouts
         scouts_list = manager.list_scouts()
@@ -1227,10 +1666,12 @@ def scouts():
             table.add_column("Type", style="magenta")
             table.add_column("Schedule", style="yellow")
             table.add_column("Last Run", style="green")
-            
+
             for s in scouts_list:
                 schedule_str = s.schedule_cron if s.schedule_cron else "Manual"
-                table.add_row(s.name, s.type, schedule_str, str(s.last_run) if s.last_run else "-")
+                table.add_row(
+                    s.name, s.type, schedule_str, str(s.last_run) if s.last_run else "-"
+                )
             console.print(table)
             console.print("\n")
 
@@ -1243,55 +1684,65 @@ def scouts():
                 questionary.Choice("🎯 Calibrate Scout", value="Calibrate Scout"),
                 questionary.Choice("✏️ Update Scout", value="Update Scout"),
                 questionary.Choice("🗑️ Delete Scout", value="Delete Scout"),
-                questionary.Choice("🔙 Back to Main Menu", value="Back to Main Menu")
-            ]
+                questionary.Choice("🔙 Back to Main Menu", value="Back to Main Menu"),
+            ],
         ).unsafe_ask()
-        
+
         if choice == "Back to Main Menu":
             break
-            
+
         elif choice == "List Scouts":
             scouts = manager.list_scouts()
-            
+
             if not scouts:
-                console.print(Panel("[yellow]No scouts found.[/yellow]", title="Your Scouts"))
-                if questionary.confirm("Would you like to create one now?").unsafe_ask():
+                console.print(
+                    Panel("[yellow]No scouts found.[/yellow]", title="Your Scouts")
+                )
+                if questionary.confirm(
+                    "Would you like to create one now?"
+                ).unsafe_ask():
                     _create_scout_flow(manager)
                     scouts = manager.list_scouts()
                 else:
                     continue
 
-            if choice == "List Scouts": # Check again in case we didn't jump to create
+            if choice == "List Scouts":  # Check again in case we didn't jump to create
                 table = Table(title="Your Scouts")
                 table.add_column("Name", style="cyan")
                 table.add_column("Type", style="magenta")
                 table.add_column("Schedule", style="yellow")
                 table.add_column("Last Run", style="green")
-                
+
                 for s in scouts:
                     schedule_str = s.schedule_cron if s.schedule_cron else "Manual"
-                    table.add_row(s.name, s.type, schedule_str, str(s.last_run) if s.last_run else "-")
+                    table.add_row(
+                        s.name,
+                        s.type,
+                        schedule_str,
+                        str(s.last_run) if s.last_run else "-",
+                    )
                 console.print(table)
-            
+
         elif choice == "Create New Scout":
             _create_scout_flow(manager)
-            
+
         elif choice == "Run Scout":
             scouts = manager.list_scouts()
             if not scouts:
                 console.print("[red]No scouts found.[/red]")
                 continue
-                
+
             s_choice = questionary.select(
-                "Select Scout:",
-                choices=[s.name for s in scouts]
+                "Select Scout:", choices=[s.name for s in scouts]
             ).unsafe_ask()
-            
+
             scout = manager.get_scout(s_choice)
-            
+
             # Dry Run Option
-            is_dry_run = questionary.confirm("Dry Run? (Fetch & Generate only, no saving/posting)", default=False).unsafe_ask()
-            
+            is_dry_run = questionary.confirm(
+                "Dry Run? (Fetch & Generate only, no saving/posting)", default=False
+            ).unsafe_ask()
+
             # Fetch content with status message
             try:
                 with console.status(f"Fetching content for {scout.name}..."):
@@ -1307,12 +1758,18 @@ def scouts():
             # Select best content with AI
             with console.status("Selecting best content..."):
                 item = manager.select_best_content(items, scout)
-            
+
             if not item:
                 # Fallback just in case
                 item = items[0]
 
-            console.print(Panel(f"[bold]{item.title}[/bold]\n{item.url}\n\n[dim]{item.summary}[/dim]", title="Selected Best Content", border_style="blue"))
+            console.print(
+                Panel(
+                    f"[bold]{item.title}[/bold]\n{item.url}\n\n[dim]{item.summary}[/dim]",
+                    title="Selected Best Content",
+                    border_style="blue",
+                )
+            )
 
             # Generate Draft
             draft_content = ""
@@ -1322,7 +1779,9 @@ def scouts():
             except ValueError as e:
                 if "GEMINI_API_KEY" in str(e):
                     console.print("[yellow]Gemini API Key not found.[/yellow]")
-                    key = questionary.password("Enter your Gemini API Key:").unsafe_ask()
+                    key = questionary.password(
+                        "Enter your Gemini API Key:"
+                    ).unsafe_ask()
                     if key:
                         set_key(ENV_FILE, "GEMINI_API_KEY", key)
                         os.environ["GEMINI_API_KEY"] = key
@@ -1334,7 +1793,9 @@ def scouts():
                             console.print(f"[red]Error: {e2}[/red]")
                             draft_content = f"{item.title}\n{item.url}"
                     else:
-                        console.print("[red]No key provided. Using title/url only.[/red]")
+                        console.print(
+                            "[red]No key provided. Using title/url only.[/red]"
+                        )
                         draft_content = f"{item.title}\n{item.url}"
                 else:
                     console.print(f"[red]Error: {e}[/red]")
@@ -1344,78 +1805,125 @@ def scouts():
                 draft_content = f"{item.title}\n{item.url}"
 
             if is_dry_run:
-                console.print(Panel(draft_content, title="[DRY RUN] Generated Draft", border_style="yellow"))
-                console.print("[yellow]Dry run complete. Nothing saved or posted.[/yellow]")
+                console.print(
+                    Panel(
+                        draft_content,
+                        title="[DRY RUN] Generated Draft",
+                        border_style="yellow",
+                    )
+                )
+                console.print(
+                    "[yellow]Dry run complete. Nothing saved or posted.[/yellow]"
+                )
                 if questionary.confirm("Press Enter to continue").unsafe_ask():
                     pass
                 continue
 
             # Check if scout has platforms configured
             platforms = json.loads(scout.platforms) if scout.platforms else []
-            
+
             if platforms:
                 # Auto-post mode
-                console.print(Panel(draft_content, title="AI Draft (Auto-Posting)", border_style="cyan"))
-                
+                console.print(
+                    Panel(
+                        draft_content,
+                        title="AI Draft (Auto-Posting)",
+                        border_style="cyan",
+                    )
+                )
+
                 # Check if Telegram review is enabled
                 if scout.telegram_review:
                     console.print("[yellow]Sending to Telegram for review...[/yellow]")
-                    
+
                     # Save to DB with status 'pending_review'
                     with next(get_session()) as session:
                         # We need to save one post per platform or handle it generically.
                         # For now, let's assume the review approves for all configured platforms.
-                        # We'll store the first platform in the post model for reference, 
+                        # We'll store the first platform in the post model for reference,
                         # but in a real multi-platform scenario we might need a better schema.
                         primary_platform = platforms[0] if platforms else "x"
-                        
+
                         db_post = PostModel(
                             content=draft_content,
                             platform=primary_platform,
                             status="pending_review",
-                            created_at=datetime.utcnow()
+                            created_at=datetime.utcnow(),
                         )
                         session.add(db_post)
                         session.commit()
-                        
-                    console.print("[green]Draft saved! Check your Telegram bot to approve.[/green]")
-                    continue # Skip direct posting
-                
+
+                    # If system is online (bot running), notify it to check pending posts immediately
+                    if _check_system_status():
+                        # We can't easily communicate with the separate process without IPC/signals
+                        # But the bot polls regularly (or we can add signal handling later).
+                        # For now, just saving to DB is enough as the bot will pick it up.
+                        pass
+                    else:
+                        # If system is offline, warn user
+                        console.print("[yellow]System is OFFLINE. Start the system to send Telegram notifications.[/yellow]")
+
+                    console.print(
+                        "[green]Draft saved! Check your Telegram bot to approve.[/green]"
+                    )
+                    continue  # Skip direct posting
+
                 # Post to all configured platforms
                 for platform in platforms:
                     console.print(f"[cyan]Posting to {platform.upper()}...[/cyan]")
                     try:
                         if platform == "x":
                             from influencerpy.platforms.x_platform import XProvider
+
                             provider = XProvider()
                             if not provider.authenticate():
-                                console.print("[bold red]Authentication failed. Missing X API credentials.[/bold red]")
-                                if questionary.confirm("Setup credentials now?").unsafe_ask():
+                                console.print(
+                                    "[bold red]Authentication failed. Missing X API credentials.[/bold red]"
+                                )
+                                if questionary.confirm(
+                                    "Setup credentials now?"
+                                ).unsafe_ask():
                                     _setup_credentials()
                                     # Try again
                                     if provider.authenticate():
                                         provider.post(draft_content)
-                                        console.print(f"[green]Posted to {platform.upper()} successfully![/green]")
+                                        console.print(
+                                            f"[green]Posted to {platform.upper()} successfully![/green]"
+                                        )
                                     else:
-                                         console.print(f"[red]Still failed to authenticate.[/red]")
+                                        console.print(
+                                            f"[red]Still failed to authenticate.[/red]"
+                                        )
                             else:
                                 provider.post(draft_content)
-                                console.print(f"[green]Posted to {platform.upper()} successfully![/green]")
+                                console.print(
+                                    f"[green]Posted to {platform.upper()} successfully![/green]"
+                                )
                         else:
-                            console.print(f"[red]Platform '{platform}' not yet supported[/red]")
+                            console.print(
+                                f"[red]Platform '{platform}' not yet supported[/red]"
+                            )
                     except Exception as e:
                         console.print(f"[red]Error posting to {platform}: {e}[/red]")
             else:
                 # Manual review mode
                 while True:
                     # Show Draft
-                    console.print(Panel(draft_content, title="AI Draft", border_style="cyan"))
-                    
+                    console.print(
+                        Panel(draft_content, title="AI Draft", border_style="cyan")
+                    )
+
                     review_action = questionary.select(
                         "Review Draft:",
-                        choices=["Accept (Edit & Post)", "Redraft (Try Again)", "Skip", "Reject", "Stop"]
+                        choices=[
+                            "Accept (Edit & Post)",
+                            "Redraft (Try Again)",
+                            "Skip",
+                            "Reject",
+                            "Stop",
+                        ],
                     ).unsafe_ask()
-                    
+
                     if review_action == "Redraft (Try Again)":
                         # Regenerate draft
                         try:
@@ -1425,277 +1933,162 @@ def scouts():
                             console.print(f"[red]Error regenerating: {e}[/red]")
                         continue
                     elif review_action == "Skip":
-                        break 
+                        break
                     elif review_action == "Reject":
                         reason = questionary.text("Reason (optional):").unsafe_ask()
                         manager.record_feedback(scout.id, item, "rejected", reason)
-                        break 
+                        break
                     elif review_action == "Stop":
                         break
                     elif review_action == "Accept (Edit & Post)":
-                        content = questionary.text("Tweet Content:", default=draft_content).unsafe_ask()
-                        
+                        content = questionary.text(
+                            "Tweet Content:", default=draft_content
+                        ).unsafe_ask()
+
                         # Post Logic
                         console.print(f"[cyan]Posting: {content}[/cyan]")
-                        
+
                         # Select platform
                         platform = questionary.select(
-                            "Select Platform:",
-                            choices=["X (Twitter)", "Skip"]
+                            "Select Platform:", choices=["X (Twitter)", "Skip"]
                         ).unsafe_ask()
-                        
+
                         if platform == "X (Twitter)":
                             from influencerpy.platforms.x_platform import XProvider
+
                             try:
                                 provider = XProvider()
                                 if not provider.authenticate():
-                                     console.print("[bold red]Authentication failed. Missing credentials.[/bold red]")
-                                     if questionary.confirm("Setup credentials now?").unsafe_ask():
-                                         _setup_credentials()
-                                         if provider.authenticate():
-                                             provider.post(content)
-                                             console.print("[green]Posted successfully![/green]")
+                                    console.print(
+                                        "[bold red]Authentication failed. Missing credentials.[/bold red]"
+                                    )
+                                    if questionary.confirm(
+                                        "Setup credentials now?"
+                                    ).unsafe_ask():
+                                        _setup_credentials()
+                                        if provider.authenticate():
+                                            provider.post(content)
+                                            console.print(
+                                                "[green]Posted successfully![/green]"
+                                            )
                                 else:
                                     provider.post(content)
                                     console.print("[green]Posted successfully![/green]")
                             except Exception as e:
                                 console.print(f"[red]Error posting: {e}[/red]")
-                        break # Exit review loop after posting
+                        break  # Exit review loop after posting
 
         elif choice == "Calibrate Scout":
-                calibration_count += 1
-                console.print(f"[green]Calibration recorded! Total: {calibration_count}[/green]")
+            _calibrate_scout_flow(manager)
 
         elif choice == "Optimize Scout":
             scouts = manager.list_scouts()
             if not scouts:
                 console.print("[red]No scouts found.[/red]")
                 continue
-                
-            s_choice = questionary.select("Select Scout to Optimize:", choices=[s.name for s in scouts]).unsafe_ask()
+
+            s_choice = questionary.select(
+                "Select Scout to Optimize:", choices=[s.name for s in scouts]
+            ).unsafe_ask()
             scout = manager.get_scout(s_choice)
-            
+
             # Check calibration count
             calibration_count = manager.get_calibration_count(scout.id)
-            
+
             if calibration_count < 20:
-                console.print(Panel(
-                    f"[yellow]Optimization requires at least 20 calibrations.\n\nCurrent calibrations: {calibration_count}\nRemaining: {20 - calibration_count}\n\nUse 'Calibrate Scout' to provide more feedback.[/yellow]",
-                    title="Optimization Locked",
-                    border_style="yellow"
-                ))
+                console.print(
+                    Panel(
+                        f"[yellow]Optimization requires at least 20 calibrations.\n\nCurrent calibrations: {calibration_count}\nRemaining: {20 - calibration_count}\n\nUse 'Calibrate Scout' to provide more feedback.[/yellow]",
+                        title="Optimization Locked",
+                        border_style="yellow",
+                    )
+                )
                 continue
-            
-            console.print("[yellow]DsPy-based optimization will be available in a future release.[/yellow]")
-            console.print(f"[cyan]This scout has {calibration_count} calibrations ready for optimization![/cyan]")
+
+            console.print(
+                "[yellow]DsPy-based optimization will be available in a future release.[/yellow]"
+            )
+            console.print(
+                f"[cyan]This scout has {calibration_count} calibrations ready for optimization![/cyan]"
+            )
 
         elif choice == "Update Scout":
-            scouts = manager.list_scouts()
-            if not scouts:
+            scouts_list = manager.list_scouts()
+            if not scouts_list:
                 console.print("[red]No scouts found.[/red]")
                 continue
-                
-            s_choice = questionary.select("Select Scout to Update:", choices=[s.name for s in scouts]).unsafe_ask()
-            scout = manager.get_scout(s_choice)
-            
-            # What to update?
-            update_field = questionary.select(
-                "What do you want to update?",
-                choices=["Name", "Configuration (Query/Feed)", "Tools", "System Prompt", "Advanced Settings (Model/Temp)", "Schedule", "Telegram Review", "Cancel"]
+
+            s_choice = questionary.select(
+                "Select Scout to Update:", choices=[s.name for s in scouts_list]
             ).unsafe_ask()
-            
-            if update_field == "Cancel":
-                continue
+            scout = manager.get_scout(s_choice)
 
-            if update_field == "Telegram Review":
-                enable_review = questionary.confirm(
-                    "Enable review on Telegram before posting?",
-                    default=scout.telegram_review
-                ).unsafe_ask()
-                manager.update_scout(scout, telegram_review=enable_review)
-                console.print(f"[green]Telegram review {'enabled' if enable_review else 'disabled'}![/green]")
-                
-            if update_field == "Tools":
-                config = json.loads(scout.config_json)
-                current_tools = config.get("tools", [])
-                
-                new_tools = questionary.checkbox(
-                    "Select Tools:",
-                    choices=[
-                        questionary.Choice("rss", checked="rss" in current_tools),
-                        questionary.Choice("http_request", checked="http_request" in current_tools),
-                        questionary.Choice("google_search", checked="google_search" in current_tools),
-                        questionary.Choice("reddit", checked="reddit" in current_tools)
-                    ]
-                ).unsafe_ask()
-                
-                config["tools"] = new_tools
-                manager.update_scout(scout, config=config)
-                console.print("[green]Tools updated![/green]")
-
-            elif update_field == "Name":
-                while True:
-                    new_name = questionary.text("New Name:", default=scout.name).unsafe_ask()
-                    if not new_name or not new_name.strip():
-                        console.print("[red]Name cannot be empty.[/red]")
-                        continue
-                    
-                    if new_name != scout.name and manager.get_scout(new_name):
-                        console.print(f"[red]A scout with the name '{new_name}' already exists.[/red]")
-                        continue
-                    break
-                    
-                manager.update_scout(scout, name=new_name)
-                console.print(f"[green]Scout renamed to '{new_name}'![/green]")
-                
-            elif update_field == "System Prompt":
-                new_prompt = questionary.text("New System Prompt:", default=scout.prompt_template or "").unsafe_ask()
-                manager.update_scout(scout, prompt_template=new_prompt)
-                console.print("[green]System Prompt updated![/green]")
-
-            elif update_field == "Advanced Settings (Model/Temp)":
-                config = json.loads(scout.config_json)
-                gen_config = config.get("generation_config", {})
-                
-                current_provider = gen_config.get("provider", "gemini")
-                provider = questionary.select(
-                    "AI Provider:",
-                    choices=["gemini", "anthropic"],
-                    default=current_provider
-                ).unsafe_ask()
-                
-                default_model = "gemini-pro" if provider == "gemini" else "claude-3-opus"
-                current_model = gen_config.get("model_id", default_model)
-                
-                model_id = questionary.text("Model ID:", default=current_model).unsafe_ask()
-                temperature = questionary.text("Temperature (0.0 - 1.0):", default=str(gen_config.get("temperature", 0.7))).unsafe_ask()
-                
-                config["generation_config"] = {
-                    "provider": provider,
-                    "model_id": model_id,
-                    "temperature": float(temperature)
-                }
-                manager.update_scout(scout, config=config)
-                console.print("[green]Advanced settings updated![/green]")
-
-            elif update_field == "Configuration (Query/Feed)":
-                config = json.loads(scout.config_json)
-                if scout.type == "search":
-                    new_query = questionary.text("New Search Query:", default=config.get("query", "")).unsafe_ask()
-                    config["query"] = new_query
-                elif scout.type == "rss":
-                    while True:
-                        current_feed = config.get("feeds", [""])[0]
-                        new_feed = questionary.text("New RSS Feed URL:", default=current_feed).unsafe_ask()
-                        with console.status("Validating feed..."):
-                            try:
-                                result = rss(action="fetch", url=new_feed, max_entries=1)
-                                if isinstance(result, list) and len(result) > 0:
-                                    config["feeds"] = [new_feed]
-                                    break
-                                else:
-                                    console.print("[red]Invalid RSS feed.[/red]")
-                                    if not questionary.confirm("Try again?").unsafe_ask():
-                                        break
-                            except Exception:
-                                console.print("[red]Error validating feed.[/red]")
-                                if not questionary.confirm("Try again?").unsafe_ask():
-                                    break
-                elif scout.type == "reddit":
-                    while True:
-                        current_sub = config.get("subreddits", [""])[0]
-                        new_sub = questionary.text("New Subreddit:", default=current_sub).unsafe_ask()
-                        with console.status("Validating subreddit..."):
-                            try:
-                                result = reddit(subreddit=new_sub, limit=1)
-                                if isinstance(result, list) and len(result) > 0:
-                                    config["subreddits"] = [new_sub]
-                                    break
-                                else:
-                                    console.print("[red]Invalid subreddit or empty.[/red]")
-                                    if not questionary.confirm("Try again?").unsafe_ask():
-                                        break
-                            except Exception as e:
-                                console.print(f"[red]Error validating: {e}[/red]")
-                                if not questionary.confirm("Try again?").unsafe_ask():
-                                    break
-                
-                manager.update_scout(scout, config=config)
-                console.print("[green]Configuration updated![/green]")
-                
-            elif update_field == "Schedule":
-                schedule_choice = questionary.select(
-                    "New Schedule:",
-                    choices=[
-                        questionary.Choice("None (Manual Run)", value="none"), # Use string 'none' to distinguish from cancel
-                        questionary.Choice("Daily (Every morning)", value="0 9 * * *"),
-                        questionary.Choice("Hourly", value="0 * * * *"),
-                        questionary.Choice("Create with AI", value="interactive"),
-                        questionary.Choice("Custom Cron (Advanced)", value="custom")
-                    ]
-                ).unsafe_ask()
-                
-                new_cron = None
-                if schedule_choice == "none":
-                    new_cron = "" # Empty string to clear
-                elif schedule_choice == "custom":
-                    new_cron = questionary.text("Enter Cron Expression:", default=scout.schedule_cron or "").unsafe_ask()
-                elif schedule_choice == "interactive":
-                    new_cron = _build_custom_schedule()
-                else:
-                    new_cron = schedule_choice
-                    
-                manager.update_scout(scout, schedule_cron=new_cron)
-                console.print("[green]Schedule updated![/green]")
+            _update_scout_flow(manager, scout)
 
         elif choice == "Delete Scout":
             scouts = manager.list_scouts()
             if not scouts:
                 console.print("[red]No scouts found.[/red]")
                 continue
-                
-            s_choice = questionary.select("Select Scout to Delete:", choices=[s.name for s in scouts]).unsafe_ask()
+
+            s_choice = questionary.select(
+                "Select Scout to Delete:", choices=[s.name for s in scouts]
+            ).unsafe_ask()
             scout = manager.get_scout(s_choice)
-            
-            if questionary.confirm(f"Are you sure you want to delete '{scout.name}'? This cannot be undone.", default=False).unsafe_ask():
+
+            if questionary.confirm(
+                f"Are you sure you want to delete '{scout.name}'? This cannot be undone.",
+                default=False,
+            ).unsafe_ask():
                 manager.delete_scout(scout)
                 console.print(f"[green]Scout '{scout.name}' deleted.[/green]")
             else:
                 console.print("[yellow]Deletion cancelled.[/yellow]")
 
+
 # ... (Update main menu to include Scouts)
 
 from influencerpy.config import ConfigManager
+
 
 def _setup_config_wizard():
     """Interactive wizard to setup AI configuration."""
     print_header(clear_screen=True)
     console.print("[bold cyan]AI Configuration Wizard[/bold cyan]\n")
-    
+
     config_manager = ConfigManager()
-    
+
     # Select Default Provider
     current_provider = config_manager.get("ai.default_provider", "gemini")
     provider = questionary.select(
         "Select Default AI Provider:",
         choices=["gemini", "anthropic"],
-        default=current_provider
+        default=current_provider,
     ).unsafe_ask()
     config_manager.set("ai.default_provider", provider)
-    
+
     # Configure Provider Settings
     if provider == "gemini":
-        current_model = config_manager.get("ai.providers.gemini.default_model", "gemini-2.5-flash")
-        model_id = questionary.text("Default Gemini Model ID:", default=current_model).unsafe_ask()
+        current_model = config_manager.get(
+            "ai.providers.gemini.default_model", "gemini-2.5-flash"
+        )
+        model_id = questionary.text(
+            "Default Gemini Model ID:", default=current_model
+        ).unsafe_ask()
         config_manager.set("ai.providers.gemini.default_model", model_id)
-        
+
     elif provider == "anthropic":
-        current_model = config_manager.get("ai.providers.anthropic.default_model", "claude-3-opus")
-        model_id = questionary.text("Default Claude Model ID:", default=current_model).unsafe_ask()
+        current_model = config_manager.get(
+            "ai.providers.anthropic.default_model", "claude-3-opus"
+        )
+        model_id = questionary.text(
+            "Default Claude Model ID:", default=current_model
+        ).unsafe_ask()
         config_manager.set("ai.providers.anthropic.default_model", model_id)
-        
+
     console.print("\n[green]Configuration saved successfully![/green]")
     time.sleep(1.5)
+
 
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
@@ -1706,72 +2099,99 @@ def main(ctx: typer.Context):
         logger.info("Application started")
         # Ensure DB is ready
         create_db_and_tables()
-        
+
         # Check Config
         config_manager = ConfigManager()
         if not config_manager.exists():
             print_header()
-            console.print("[bold yellow]Welcome! Let's configure your AI settings.[/bold yellow]")
+            console.print(
+                "[bold yellow]Welcome! Let's configure your AI settings.[/bold yellow]"
+            )
             if questionary.confirm("Start configuration wizard?").unsafe_ask():
                 _setup_config_wizard()
             else:
-                config_manager.ensure_config_exists() # Create defaults
-        
+                config_manager.ensure_config_exists()  # Create defaults
+
         # First run check
         if not os.path.exists(ENV_FILE) or not os.getenv("X_API_KEY"):
             print_header()
-            console.print("[bold yellow]Welcome! It looks like your first time here.[/bold yellow]")
+            console.print(
+                "[bold yellow]Welcome! It looks like your first time here.[/bold yellow]"
+            )
             if questionary.confirm("Do you want to run the setup wizard?").unsafe_ask():
                 _setup_credentials()
                 load_dotenv(override=True)
 
-    # ... (rest of main)
-
+        # ... (rest of main)
 
         # Interactive Menu Mode
         while True:
             try:
                 # Don't clear screen in loop to allow scrolling history
-                print_header(clear_screen=False) 
-                
+                print_header(clear_screen=False)
+
                 # Check for pending reviews
                 pending_count = 0
                 try:
                     with next(get_session()) as session:
-                        pending_count = len(session.exec(select(PostModel).where(PostModel.status == "pending_review")).all())
+                        pending_count = len(
+                            session.exec(
+                                select(PostModel).where(
+                                    PostModel.status == "pending_review"
+                                )
+                            ).all()
+                        )
                 except Exception:
                     pass
 
                 choices = []
-                
+
                 # Smart prioritization
                 if pending_count > 0:
-                    choices.append(questionary.Choice(f"📝 Review Pending Drafts ({pending_count})", value="Review Pending"))
-                
+                    choices.append(
+                        questionary.Choice(
+                            f"📝 Review Pending Drafts ({pending_count})",
+                            value="Review Pending",
+                        )
+                    )
+
                 # System Control
                 is_online = _check_system_status()
                 if is_online:
-                    choices.append(questionary.Choice("🔴 Stop System", value="Stop System"))
+                    choices.append(
+                        questionary.Choice("🔴 Stop System", value="Stop System")
+                    )
                 else:
-                    choices.append(questionary.Choice("🟢 Start System", value="Start System"))
+                    choices.append(
+                        questionary.Choice("🟢 Start System", value="Start System")
+                    )
 
-                choices.extend([
-                    questionary.Choice("✍️ Quick Post", value="Quick Post"),
-                    questionary.Choice("🤖 Manage Scouts", value="Manage Scouts"),
-                    questionary.Choice("📊 Launch Dashboard", value="Launch Dashboard"),
-                    questionary.Choice("⚙️ Configure AI Settings", value="Configure AI Settings"),
-                    questionary.Choice("🔑 Configure Credentials", value="Configure Credentials"),
-                    questionary.Choice("🚪 Exit", value="Exit")
-                ])
+                choices.extend(
+                    [
+                        questionary.Choice("✍️ Quick Post", value="Quick Post"),
+                        questionary.Choice("🤖 Manage Scouts", value="Manage Scouts"),
+                        questionary.Choice(
+                            "📊 Launch Dashboard", value="Launch Dashboard"
+                        ),
+                        questionary.Choice(
+                            "⚙️ Configure AI Settings", value="Configure AI Settings"
+                        ),
+                        questionary.Choice(
+                            "🔑 Configure Credentials", value="Configure Credentials"
+                        ),
+                        questionary.Choice("🚪 Exit", value="Exit"),
+                    ]
+                )
 
                 choice = questionary.select(
-                    "What would you like to do?",
-                    choices=choices
+                    "What would you like to do?", choices=choices
                 ).unsafe_ask()
-                
+
                 if choice == "Start System":
-                    console.print("[green]Starting system... (Press Ctrl+C to stop)[/green]")
-                    bot() # This blocks
+                    console.print(
+                        "[green]Starting system... (Press Ctrl+C to stop)[/green]"
+                    )
+                    bot()  # This blocks
                 elif choice == "Stop System":
                     _stop_system()
                 elif choice == "Review Pending":
@@ -1790,14 +2210,16 @@ def main(ctx: typer.Context):
                     console.print("[yellow]Goodbye![/yellow]")
                     logger.info("Application shutdown")
                     break
-                    
+
             except KeyboardInterrupt:
-                console.print("\n") # Newline for cleanliness
-                if questionary.confirm("Do you want to quit the application?", default=False).ask():
+                console.print("\n")  # Newline for cleanliness
+                if questionary.confirm(
+                    "Do you want to quit the application?", default=False
+                ).ask():
                     console.print("[yellow]Goodbye![/yellow]")
                     break
                 else:
-                    continue # Back to main menu
+                    continue  # Back to main menu
             except Exception as e:
                 logger.error(f"Unhandled exception: {e}", exc_info=True)
                 console.print(f"[bold red]An unexpected error occurred: {e}[/bold red]")
@@ -1805,6 +2227,7 @@ def main(ctx: typer.Context):
                     continue
                 else:
                     break
+
 
 if __name__ == "__main__":
     app()

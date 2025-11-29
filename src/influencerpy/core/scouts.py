@@ -1,25 +1,36 @@
 import json
+import logging
 import os
-from typing import List, Optional
 from datetime import datetime
-from sqlmodel import select
+from typing import List, Optional, Dict
+from pydantic import BaseModel, Field
 
 from strands import Agent
-from influencerpy.tools.rss_tool import rss
-from influencerpy.tools.http_tool import http_request
-from influencerpy.tools.image_generation import generate_image_stability
+from strands.tools.tools import PythonAgentTool
+from strands_tools import rss, generate_image_stability
+from strands_tools.browser import LocalChromiumBrowser
+from strands.handlers.callback_handler import null_callback_handler
 from influencerpy.tools.search import google_search
 from influencerpy.tools.reddit import reddit
 from influencerpy.tools.arxiv_tool import arxiv_search
-
-from influencerpy.database import get_session, ScoutModel, ScoutFeedbackModel, ScoutCalibrationModel
-from influencerpy.core.models import ContentItem
-from influencerpy.config import ConfigManager
+from influencerpy.core.interfaces import AgentProvider
 from influencerpy.providers.gemini import GeminiProvider
 from influencerpy.providers.anthropic import AnthropicProvider
-from influencerpy.core.interfaces import AgentProvider
+from influencerpy.config import ConfigManager
 from influencerpy.logger import get_scout_logger
-import logging
+from influencerpy.database import get_session, ScoutModel, ScoutFeedbackModel, ScoutCalibrationModel
+from influencerpy.core.models import ContentItem
+from influencerpy.types.scout import ScoutResponse
+from influencerpy.core.telemetry import setup_langfuse
+from sqlmodel import select
+
+# Import new prompt components
+from influencerpy.core.prompts import SystemPrompt
+from influencerpy.core.prompt_templates import (
+    GENERAL_GUARDRAILS,
+    build_tool_prompt,
+    get_platform_instructions,
+)
 
 class ScoutManager:
     def __init__(self):
@@ -33,12 +44,12 @@ class ScoutManager:
             
         if provider_name == "gemini":
             if not model_id:
-                model_id = self.config_manager.get("ai.providers.gemini.default_model", "gemini-pro")
+                model_id = self.config_manager.get("ai.providers.gemini.default_model", "gemini-2.5-flash")
             return GeminiProvider(model_id=model_id, temperature=temperature)
             
         elif provider_name == "anthropic":
             if not model_id:
-                model_id = self.config_manager.get("ai.providers.anthropic.default_model", "claude-3-opus")
+                model_id = self.config_manager.get("ai.providers.anthropic.default_model", "claude-4.5-sonnet")
             return AnthropicProvider(model_id=model_id, temperature=temperature)
             
         else:
@@ -122,8 +133,17 @@ class ScoutManager:
             if override_config:
                 config.update(override_config)
                 logger.info(f"Applied config overrides: {override_config}")
-                
+            
             items = []
+            
+            # Initialize Langfuse if enabled globally
+            # We check if setup_langfuse returns True, which implies env vars are set.
+            # We no longer check config.get("langfuse_enabled") per scout.
+            if setup_langfuse():
+                logger.info("Langfuse tracing enabled for this run.")
+            else:
+                # Silent fail or debug log if not configured, as it's optional
+                logger.debug("Langfuse not configured or setup failed.")
             
             # Check for tools
             tools_config = config.get("tools", [])
@@ -131,9 +151,74 @@ class ScoutManager:
                 # Initialize Agent with selected tools
                 agent_tools = []
                 if "rss" in tools_config:
-                    agent_tools.append(rss)
-                if "http_request" in tools_config:
-                    agent_tools.append(http_request)
+                    # Set environment variable for isolated RSS storage before tool execution
+                    # Use scout name (sanitized) for isolation
+                    safe_name = "".join(c for c in scout.name if c.isalnum() or c in (' ', '_')).replace(' ', '_')
+                    import tempfile
+                    isolated_path = os.path.join(tempfile.gettempdir(), "strands_rss_feeds", safe_name)
+                    os.environ["STRANDS_RSS_STORAGE_PATH"] = isolated_path
+                    
+                    # Import the local RSS tool
+                    # Note: Since we modified src/influencerpy/tools/rss.py to use the env var dynamically via property,
+                    # we don't need to reload or re-instantiate the manager. Setting the env var is enough 
+                    # IF the tool reads it on access. 
+                    # However, the rss_manager is instantiated at module level in the local rss.py.
+                    # My previous edit to rss.py changed __init__ to pass, and added a property storage_path.
+                    # This ensures that every time storage_path is accessed (e.g. by get_feed_file_path), 
+                    # it reads the current env var.
+                    
+                    from influencerpy.tools import rss as local_rss
+                    agent_tools.append(local_rss.rss)
+                if "browser" in tools_config:
+                    browser = LocalChromiumBrowser()
+                    
+                    # Wrap to ignore 'agent' and 'event_loop_cycle_id' argument injected by Strands
+                    def browser_wrapper(browser_input, agent=None, event_loop_cycle_id=None, **kwargs):
+                        try:
+                            # browser_input is the tool_use object
+                            tool_args = browser_input.get("input", {})
+                            tool_use_id = browser_input.get("toolUseId")
+                            
+                            # Unpack arguments
+                            if isinstance(tool_args, dict):
+                                result = browser.browser(**tool_args)
+                            else:
+                                result = browser.browser(tool_args)
+                            
+                            response = {
+                                "toolUseId": tool_use_id
+                            }
+
+                            if isinstance(result, dict):
+                                response["status"] = result.get("status", "success")
+                                response["output"] = result
+                                if "content" in result:
+                                    response["content"] = result["content"]
+                                else:
+                                    response["content"] = [{"json": result}]
+                            elif isinstance(result, str):
+                                response["status"] = "success"
+                                response["output"] = result
+                                response["content"] = [{"text": result}]
+                            else:
+                                response["status"] = "success"
+                                response["output"] = result
+                                response["content"] = [{"text": str(result)}]
+                            
+                            return response
+                        except Exception as e:
+                            return {
+                                "status": "error", 
+                                "output": str(e),
+                                "content": [{"text": str(e)}],
+                                "toolUseId": browser_input.get("toolUseId")
+                            }
+
+                    agent_tools.append(PythonAgentTool(
+                        tool_name=browser.browser.tool_spec['name'],
+                        tool_spec=browser.browser.tool_spec,
+                        tool_func=browser_wrapper
+                    ))
                 if "google_search" in tools_config:
                     agent_tools.append(google_search)
                 if "reddit" in tools_config:
@@ -143,146 +228,129 @@ class ScoutManager:
                 
                 # Check for image generation
                 if config.get("image_generation"):
-                    agent_tools.append(generate_image_stability)
+                    agent_tools.append(PythonAgentTool(
+                        tool_name=generate_image_stability.TOOL_SPEC['name'],
+                        tool_spec=generate_image_stability.TOOL_SPEC,
+                        tool_func=generate_image_stability.generate_image_stability
+                    ))
 
-                # Check for meta scout (Agents as Tools)
-                if scout.type == "meta":
-                    from influencerpy.core.meta_scout import create_scout_tool
-                    child_scout_names = config.get("child_scouts", [])
-                    for name in child_scout_names:
-                        child_scout = self.get_scout(name)
-                        if child_scout:
-                            # Create a tool for this scout
-                            # Pass self (ScoutManager) to the factory
-                            tool_func = create_scout_tool(child_scout, self)
-                            agent_tools.append(tool_func)
-                            logger.info(f"Added child scout tool: {tool_func.tool_name}")
-                    
                 if agent_tools:
-                    logger.info(f"Initializing agent with tools: {[t.tool_name for t in agent_tools]}")
-                    try:
-                        # Get provider/model from config or default
-                        provider = self._get_agent_provider() 
-                        
-                        # Let's create a new Agent here using the configured model
-                        # We need to get the model configuration
-                        gen_config = config.get("generation_config", {})
-                        provider_name = gen_config.get("provider", "gemini")
-                        
-                        # We only support Gemini for tools right now as per user request (search tool uses Gemini)
-                        # And Strands Agent needs a model.
-                        
-                        from strands.models.gemini import GeminiModel
-                        from strands.handlers.callback_handler import null_callback_handler
-                        api_key = os.getenv("GEMINI_API_KEY")
-                        if not api_key:
-                            raise ValueError("GEMINI_API_KEY not found")
+                        logger.info(f"Initializing agent with tools: {[t.tool_name for t in agent_tools]}")
+                        try:
+                            gen_config = config.get("generation_config", {})
+                            provider_name = gen_config.get("provider", "gemini")
+                                
+                            model_id = gen_config.get("model_id", "gemini-2.5-flash") # Default for tools
+                            # Get the provider/model
+                            temperature = gen_config.get("temperature", 0.7)
+                            provider = self._get_agent_provider(provider_name, model_id, temperature)
+                            model = provider.get_model()
                             
-                        model_id = gen_config.get("model_id", "gemini-2.5-flash") # Default for tools
-                        
-                        model = GeminiModel(
-                            client_args={"api_key": api_key},
-                            model_id=model_id,
-                            params={"temperature": 0.7}
-                        )
-                        
-                        agent = Agent(
-                            model=model, 
-                            tools=agent_tools,
-                            callback_handler=null_callback_handler()
-                        )
-                        
-                        query = override_query or config.get("query")
-                        url = config.get("url")
-                        feeds = config.get("feeds", [])
-                        subreddits = config.get("subreddits", [])
-                        
-                        if url:
-                            goal = f"Analyze the content at: {url}"
-                            if query:
-                                goal += f" Focus on: '{query}'."
-                        elif feeds:
-                            feed_list = "\n- ".join(feeds)
-                            goal = f"Find interesting content from the following RSS feeds:\n{feed_list}\n\nUse the 'rss' tool with action='fetch' to read these feeds."
-                            if query:
-                                goal += f" Filter for content related to: '{query}'."
-                        elif subreddits:
-                            sub_list = ", ".join(subreddits)
-                            goal = f"Find interesting content from the following subreddits: {sub_list}. Use the 'reddit' tool."
-                            if query:
-                                goal += f" Filter for content related to: '{query}'."
-                        elif "arxiv" in tools_config:
-                            date_filter = config.get("date_filter")
-                            days_back_map = {
-                                "today": 1,
-                                "week": 7,
-                                "month": 30
+                            # Build trace attributes for Langfuse
+                            trace_attributes = {
+                                "session.id": scout.name,  # Scout name as session ID
+                                "user.id": "influencerpy",  # Application identifier
+                                "langfuse.tags": [
+                                    f"scout-type:{scout.type}",
+                                    f"provider:{provider_name}",
+                                    f"model:{model_id or 'default'}"
+                                ]
                             }
-                            days = days_back_map.get(date_filter)
                             
-                            if days:
-                                goal = f"Find research papers about: \"{query or 'latest research'}\" published within the last {days} days. Use the 'arxiv_search' tool with days_back={days}."
+                            # Initialize agent with tools and tracing
+                            agent = Agent(
+                                model=model,
+                                tools=agent_tools,
+                                structured_output_model=None,
+                                callback_handler=null_callback_handler(),
+                                trace_attributes=trace_attributes
+                            )
+                            
+                            query = override_query or config.get("query")
+                            url = config.get("url")
+                            feeds = config.get("feeds", [])
+                            subreddits = config.get("subreddits", [])
+                            
+                            if scout.type == "meta":
+                                orchestration_prompt = config.get("orchestration_prompt", "Coordinate the available tools to find interesting content.")
+                                goal = f"Orchestrate the available tools to: {orchestration_prompt}."
+                                if override_query:
+                                    goal += f" Focus on: '{override_query}'."
+                            elif url:
+                                goal = f"Analyze the content at: {url}. Use the 'browser' tool to navigate to the URL and extract the text."
+                                if query:
+                                    goal += f" Focus on: '{query}'."
+                            elif feeds:
+                                goal = "Find interesting content from your subscribed RSS feeds. Use the 'rss' tool to list available feeds and read them."
+                                if query:
+                                    goal += f" Filter for content related to: '{query}'."
+                            elif subreddits:
+                                sub_list = ", ".join(subreddits)
+                                goal = f"Find interesting content from the following subreddits: {sub_list}. Use the 'reddit' tool."
+                                if query:
+                                    goal += f" Filter for content related to: '{query}'."
+                            elif "arxiv" in tools_config:
+                                date_filter = config.get("date_filter")
+                                days_back_map = {
+                                    "today": 1,
+                                    "week": 7,
+                                    "month": 30
+                                }
+                                days_back = days_back_map.get(date_filter)
+                                
+                                goal = f"Find research papers about: \"{query or 'latest research'}\". Use the 'arxiv' tool."
+                                if days_back:
+                                    goal += f" Filter for papers from the last {days_back} days."
                             else:
-                                goal = f"Find research papers about: \"{query or 'latest research'}\". Use the 'arxiv_search' tool."
-                        elif scout.type == "meta":
-                            orchestration_prompt = config.get("orchestration_prompt", "Coordinate the child scouts to find interesting content.")
-                            goal = f"Orchestrate the child scouts to: {orchestration_prompt}. Use the available scout tools."
-                        else:
-                            goal = f"Find interesting content about: \"{query or 'latest news'}\""
+                                goal = f"Find interesting content about: \"{query or 'latest news'}\""
                             
-                        prompt = f"""
-                        You are a content scout. Your goal is to: {goal}.
-                        
-                        Use your tools to find relevant articles, news, or posts.
-                        
-                        Return a JSON list of at most {limit} items. 
-                        Each item must have:
-                        - "title": str
-                        - "url": str
-                        - "summary": str (brief summary)
-                        - "sources": List[str] (list of source URLs or titles used)
-                        
-                        Output ONLY valid JSON.
-                        """
-                        
-                        if config.get("image_generation"):
-                            prompt += """
+                            # Use custom prompt_template if provided, otherwise use auto-generated goal
+                            user_instructions = scout.prompt_template or goal
                             
-                            ALSO: Generate an image that represents the most interesting content you found.
-                            Use the 'generate_image_stability' tool.
-                            The image should be high quality and relevant to the content.
+                            # Build structured system prompt
+                            system_prompt = SystemPrompt(
+                                general_instructions=GENERAL_GUARDRAILS,
+                                tool_instructions=build_tool_prompt(tools_config),
+                                platform_instructions="",  # No platform formatting for content discovery
+                                user_instructions=user_instructions
+                            )
                             
-                            In your JSON output, add an "image_path" field to the item that corresponds to the generated image.
-                            The tool will save the image and return the path (or you can infer it from the tool output).
-                            If no image was generated, omit the field.
-                            """
-                        
-                        logger.info("Executing agent...")
-                        response = agent(prompt)
-                        logger.info("Agent execution completed.")
-                        
-                        # Parse JSON response
-                        # Clean markdown code blocks if present
-                        text = str(response).strip()
-                        if text.startswith("```json"):
-                            text = text[7:]
-                        if text.endswith("```"):
-                            text = text[:-3]
+                            # Build final prompt with context
+                            prompt = system_prompt.build(
+                                date=datetime.utcnow().strftime('%Y-%m-%d'),
+                                limit=limit
+                            )
                             
-                        data = json.loads(text.strip())
-                        if isinstance(data, list):
+                            # Add image generation instructions if enabled
+                            if config.get("image_generation"):
+                                prompt += """
+
+ALSO: Generate an image that represents the most interesting content you found.
+Use the 'generate_image_stability' tool.
+The image should be high quality and relevant to the content.
+
+In your output, populate the "image_path" field for the item that corresponds to the generated image.
+The tool will save the image and return the path (or you can infer it from the tool output).
+                                If no image was generated, omit the field.
+                                """
+                            
+                            logger.info("Executing agent...")
+                            response = agent(prompt, structured_output_model=ScoutResponse)
+                            logger.info("Agent execution completed.")
+                            
+                            data = response.structured_output.items
                             for i, entry in enumerate(data):
                                 items.append(ContentItem(
                                     source_id=f"scout_gen_{int(datetime.utcnow().timestamp())}_{i}",
-                                    title=entry.get("title", "No Title"),
-                                    url=entry.get("url", "#"),
-                                    summary=entry.get("summary", ""),
-                                    metadata={"sources": entry.get("sources", [])}
+                                    title=entry.title,
+                                    url=entry.url,
+                                    summary=entry.summary,
+                                    metadata={"sources": entry.sources, "image_path": entry.image_path}
                                 ))
                             logger.info(f"Agent found {len(items)} items.")
                                 
-                    except Exception as e:
-                        logger.error(f"Agent execution failed: {e}", exc_info=True)
+                        except Exception as e:
+                            logger.error(f"Agent execution failed: {e}", exc_info=True)
             
             # Update last run
             scout.last_run = datetime.utcnow()
@@ -378,11 +446,19 @@ class ScoutManager:
             for i, item in enumerate(items)
         ])
         
-        system_prompt = scout.prompt_template or "Summarize this content and highlight key takeaways for a social media audience."
+        # Build structured system prompt for content selection
+        user_instructions = scout.prompt_template or "Select the best content for social media audience engagement."
         
-        prompt = f"""You are selecting the BEST content for social media posting.
-
-Scout Goal: {system_prompt}
+        system_prompt = SystemPrompt(
+            general_instructions=GENERAL_GUARDRAILS,
+            tool_instructions="",  # No tools needed for selection
+            platform_instructions="",  # No platform formatting yet
+            user_instructions=user_instructions
+        )
+        
+        prompt = system_prompt.build()
+        
+        prompt += f"""
 
 Here are the available content options:
 
@@ -475,23 +551,36 @@ Respond with ONLY the number of the best option (e.g., "1" or "2" or "3").
         model_id = gen_config.get("model_id") # Let factory handle default if None
         temperature = gen_config.get("temperature", 0.7)
         
-        system_prompt = scout.prompt_template or "Summarize this content and highlight key takeaways for a social media audience."
+        # Detect platform from scout config (default to "x" for Twitter)
+        platforms = json.loads(scout.platforms) if scout.platforms else []
+        platform = platforms[0] if platforms else "x"
         
-        prompt = f"""
-        {system_prompt}
+        # Build structured system prompt for post generation
+        user_instructions = scout.prompt_template or "Summarize this content and highlight key takeaways for a social media audience."
         
-        Content Title: {item.title}
-        Content URL: {item.url}
-        Content Summary: {item.summary or 'N/A'}
+        system_prompt = SystemPrompt(
+            general_instructions=GENERAL_GUARDRAILS,
+            tool_instructions="",  # No tools needed for generation
+            platform_instructions=get_platform_instructions(platform),
+            user_instructions=user_instructions
+        )
         
-        Generate a social media post based on the above.
+        prompt = system_prompt.build()
         
-        CRITICAL OUTPUT INSTRUCTIONS:
-        1. Output ONLY the raw text of the social media post.
-        2. Do NOT include any conversational filler like "Here is the post" or "Sure!".
-        3. Do NOT use markdown code blocks (no ```).
-        4. Do NOT include the title or URL again unless it's naturally part of the post.
-        5. Start directly with the first word of the post.
+        prompt += f"""
+
+Content Title: {item.title}
+Content URL: {item.url}
+Content Summary: {item.summary or 'N/A'}
+
+Generate a social media post based on the above.
+
+CRITICAL OUTPUT INSTRUCTIONS:
+1. Output ONLY the raw text of the social media post.
+2. Do NOT include any conversational filler like "Here is the post" or "Sure!".
+3. Do NOT use markdown code blocks (no ```).
+4. Do NOT include the title or URL again unless it's naturally part of the post.
+5. Start directly with the first word of the post.
         """
         
         try:

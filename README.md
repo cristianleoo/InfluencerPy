@@ -27,8 +27,8 @@ Create configurable agents that patrol the web for you:
 - **Reddit Scouts**: Surface viral discussions from specific subreddits.
 - **Search Scouts**: Discover trending news via Google Search.
 - **Arxiv Scouts**: Monitor new research papers on Arxiv.
+- **Browser Scouts** ⚠️ *[Experimental]*: Navigate web pages and extract content dynamically.
 - **Telegram Integration**: Review and approve posts via a Telegram bot before they are published.
-- **HTTP Scouts**: Watch specific webpages for updates.
 
 ### 🧠 AI-Powered Core
 

@@ -14,7 +14,8 @@ Every time a Scout runs, it follows a sophisticated 5-step process:
     *   It scores them based on **Relevance**, **Engagement Potential**, and **Quality** to pick the single best piece of content.
 4.  **Drafting (The Creative)**:
     *   The selected content is fed into a Generative AI model.
-    *   The AI writes a social media post using your configured **System Prompt** (Tone, Style, constraints).
+    *   The AI writes a social media post using your **User Instructions** combined with system guardrails and platform-specific formatting.
+    *   *See [System Prompts Architecture](system-prompts.md) for details on how prompts are structured.*
     *   *Note:* For X (Twitter), posts longer than 280 characters are automatically threaded.
 5.  **Action**:
     *   **Manual Mode**: The draft is presented to you in the CLI for review (Accept/Redraft/Reject).
@@ -41,10 +42,11 @@ InfluencerPy offers four specialized Scout types, each designed for a different 
 
 **Best for:** Monitoring specific, trusted sources like blogs, newsletters, or news sites.
 
-*   **How it works:** Uses the **Strands RSS Tool** to fetch and parse XML/Atom feeds.
+*   **How it works:** Uses the **InfluencerPy RSS Tool** to subscribe to and manage XML/Atom feeds.
+*   **Database Storage:** Feeds and entries are stored locally in the `influencerpy.db` database. This ensures that the system remembers what it has already seen, preventing duplicate content and allowing for efficient updates.
 *   **Configuration:**
-    *   **Feeds**: A list of valid RSS Feed URLs.
-*   **Intelligence:** The Agent doesn't just blindly pick the newest item. It reads the feed entries and selects the one most relevant to the prompt "Find interesting content".
+    *   **Feeds:** A list of valid RSS Feed URLs. The system automatically validates and subscribes to them upon creation.
+*   **Intelligence:** The Agent acts as a reader. It first lists your subscribed feeds and then selectively reads content that matches its goal ("Find interesting content"). It doesn't just blindly pick the newest item; it analyzes the feed entries for relevance.
 *   **Finding Feeds:** Most news sites have an RSS feed at `/rss`, `/feed`, or `/feeds`.
     *   *TechCrunch:* `https://techcrunch.com/feed/`
     *   *The Verge:* `https://www.theverge.com/rss/index.xml`
@@ -89,16 +91,15 @@ InfluencerPy offers four specialized Scout types, each designed for a different 
 
 *   **How it works:** Uses the **Agents as Tools** pattern. It acts as a manager that can call other existing Scouts as if they were tools.
 *   **Creation Modes:**
-    1.  **Wrap Existing Scouts**: Select "Meta-Scout" -> "Wrap Existing Scouts" to orchestrate scouts you've already created.
-    2.  **Create New Bundle**: Select "Meta-Scout" -> "Create New Bundle" to select multiple scout types (e.g., Search + Arxiv) and create them all at once along with the orchestrator.
+    1.  **Wrap Existing Scouts**: Select "Meta-Scout" -> "Wrap Existing Scouts" to orchestrate scouts you've already created (Agents as Tools).
+    2.  **Custom Toolset**: Select "Meta-Scout" -> "Custom Toolset" to create a single agent with access to multiple raw tools (Search, Arxiv, HTTP, etc.).
 *   **Configuration:**
-    *   **Child Scouts**: The scouts this Meta-Scout controls.
-    *   **Orchestration Goal**: A high-level instruction (e.g., "Find a trending AI topic using the Search Scout, then find a research paper about it using the Arxiv Scout, and summarize both.").
-*   **Dynamic Configuration:** The Meta-Scout can dynamically override settings of its child scouts at runtime.
-    *   **HTTP Request Scout:** The orchestrator can change the target `url` (e.g., to fetch a date-specific URL).
-    *   **Arxiv Scout:** The orchestrator can change the `date_filter` (e.g., to focus on "today" or "week").
+    *   **Tools**: The specific tools enabled for this agent (e.g., Google Search, Arxiv Search).
+    *   **Orchestration Goal**: A high-level instruction on how to use the tools (e.g., "Find today's top AI paper on HuggingFace and search for it on Arxiv").
+*   **Dynamic Capabilities:**
+    *   Since the agent has direct access to tools, it can dynamically generate arguments (like URLs or queries) based on its goal and intermediate results.
 *   **Example Use Case:**
-    *   *Goal:* "Check the 'Tech News' RSS Scout for the latest Apple announcement, then use the 'Reddit' Scout to find community reactions to it."
+    *   *Goal:* "Check the 'Tech News' RSS feed for the latest Apple announcement, then use the 'Reddit' tool to find community reactions."
     *   *Result:* A comprehensive report combining official news with public sentiment.
 
 ---

@@ -2,6 +2,7 @@ from typing import Optional
 from datetime import datetime
 from sqlmodel import Field, SQLModel, create_engine, Session
 from influencerpy.core.models import Platform
+from influencerpy.types.rss import RSSFeedModel, RSSEntryModel
 
 class PostModel(SQLModel, table=True):
     """Database model for posts."""

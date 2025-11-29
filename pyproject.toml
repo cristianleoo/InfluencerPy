@@ -7,10 +7,10 @@ name = "influencerpy"
 version = "0.1.0"
 description = "Premium Social Media Automation CLI"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = "MIT"
 authors = [
-  { name = "Cristian Leo", email = "cristian@example.com" },
+  { name = "Cristian Leo", email = "cristianleo120@gmail.com" },
 ]
 dependencies = [
   "typer[all]",
@@ -21,13 +21,19 @@ dependencies = [
   "sqlmodel",
   "feedparser",
   "requests",
-  "google-generativeai",  # For embeddings/generation
+  "google-generativeai",
   "questionary",
   "pyfiglet",
   "mkdocs-material",
   "arxiv",
   "beautifulsoup4",
   "apscheduler",
+  "strands-agents-tools",
+  "strands-agents[anthropic]",
+  "strands-agents[gemini]",
+  "strands-agents[otel]",
+  "langfuse",
+
 ]
 
 [project.scripts]

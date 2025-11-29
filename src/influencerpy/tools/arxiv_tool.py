@@ -1,32 +1,5 @@
-import requests
-from bs4 import BeautifulSoup
 import arxiv
 from strands import tool
-
-def get_top_paper_url(exclude_urls: set | None = None):
-    """
-    Fetches the URL of the top paper from the Hugging Face papers page.
-    """
-    url = "https://huggingface.co/papers"
-    try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, "html.parser")
-        
-        # This selector might need adjustment based on HF's actual structure
-        # Based on x-ai example: soup.find("article").find("a")
-        article = soup.find("article")
-        if article:
-            link = article.find("a")
-            if link and link.has_attr('href'):
-                full_url = f"https://huggingface.co{link['href']}"
-                if exclude_urls and full_url in exclude_urls:
-                    return None
-                return full_url
-    except Exception as e:
-        print(f"Error fetching top paper: {e}")
-        return None
-    return None
 
 def get_arxiv_id_from_url(url: str) -> str:
     """

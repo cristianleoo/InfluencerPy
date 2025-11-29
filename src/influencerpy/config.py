@@ -7,6 +7,7 @@ PACKAGE_ROOT = Path(__file__).parent.resolve()
 PROJECT_ROOT = PACKAGE_ROOT.parent.parent
 CONFIG_DIR = PROJECT_ROOT / ".influencerpy"
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
+ENV_FILE = PROJECT_ROOT / ".env"
 
 DEFAULT_CONFIG = {
     "ai": {

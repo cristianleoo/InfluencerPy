@@ -6,6 +6,19 @@ InfluencerPy is designed to run continuously in the background to monitor feeds 
 
 Since InfluencerPy is a CLI application, closing your terminal will stop the bot. Here are two ways to keep it running.
 
+### Langfuse Tracing (Optional)
+To enable observability for your scouts via Langfuse:
+1.  Sign up at [Langfuse](https://langfuse.com/).
+2.  Get your API keys (Base URL, Public Key, Secret Key).
+3.  **Easy Setup:** Run `influencerpy` and select **"Configure Credentials"** -> **"Langfuse (Tracing)"**.
+4.  **Manual Setup:** Add them to your `.env` file:
+    ```bash
+    LANGFUSE_HOST="https://cloud.langfuse.com"
+    LANGFUSE_PUBLIC_KEY="pk-lf-..."
+    LANGFUSE_SECRET_KEY="sk-lf-..."
+    ```
+5.  When creating a scout, you can enable tracing. If keys are missing, the CLI will offer to help you set them up.
+
 ### Option 1: Using `tmux` (Recommended for Beginners)
 
 `tmux` allows you to create a session that keeps running even after you disconnect from your server.

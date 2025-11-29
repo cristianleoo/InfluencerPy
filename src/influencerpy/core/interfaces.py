@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Any
 from influencerpy.core.models import ContentItem, PostDraft, Platform
 
 class SocialProvider(ABC):
@@ -34,4 +34,9 @@ class AgentProvider(ABC):
     @abstractmethod
     def generate(self, prompt: str, **kwargs) -> str:
         """Generate text from a prompt."""
+        pass
+
+    @abstractmethod
+    def get_model(self) -> "Any":
+        """Get the underlying Strands model instance."""
         pass

@@ -10,3 +10,7 @@ class AnthropicProvider(AgentProvider):
     def generate(self, prompt: str, **kwargs) -> str:
         """Generate text using Anthropic (Not Implemented)."""
         raise NotImplementedError("Anthropic provider is not yet implemented.")
+
+    def get_model(self) -> "Any":
+        """Get the underlying Anthropic model."""
+        raise NotImplementedError("Anthropic provider is not yet implemented.")

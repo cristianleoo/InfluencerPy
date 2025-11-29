@@ -3,16 +3,17 @@ site_description: Premium Social Media Automation CLI
 repo_url: https://github.com/cristianleoo/InfluencerPy
 
 theme:
-  name: material
   icon:
     logo: material/robot-outline
     repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
   palette:
     # Palette toggle for light mode
     - media: "(prefers-color-scheme: light)"
       scheme: default
       primary: deep purple
-      accent: cyan
+      accent: indigo
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
@@ -20,7 +21,7 @@ theme:
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
       primary: purple
-      accent: cyan
+      accent: indigo
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -40,6 +41,8 @@ theme:
     - navigation.top
     - navigation.footer
     - toc.follow
+    - toc.integrate
+    - header.autohide
     - search.suggest
     - search.highlight
     - search.share
@@ -47,14 +50,9 @@ theme:
     - content.tooltips
     - content.action.edit
     - content.action.view
+    - content.tabs.link
 
-  icon:
-    logo: material/robot-outline
-    repo: fontawesome/brands/github
-    edit: material/pencil
-    view: material/eye
 
-extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/cristianleoo/InfluencerPy
