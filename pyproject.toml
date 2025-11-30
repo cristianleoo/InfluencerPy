@@ -34,6 +34,7 @@ dependencies = [
   "strands-agents-tools[rss]",
   "strands-agents-tools[local_chromium_browser]",
   "langfuse",
+  "sentence-transformers",
 
 ]
 

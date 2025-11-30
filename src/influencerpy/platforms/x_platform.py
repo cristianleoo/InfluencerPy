@@ -4,7 +4,7 @@ import textwrap
 import math
 from typing import Optional
 from influencerpy.core.interfaces import SocialProvider
-from influencerpy.core.models import Platform, PostDraft
+from influencerpy.types.models import Platform, PostDraft
 
 class XProvider(SocialProvider):
     def __init__(self):

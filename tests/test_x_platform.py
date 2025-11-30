@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch, call
 from influencerpy.platforms.x_platform import XProvider
-from influencerpy.core.models import PostDraft
+from influencerpy.types.models import PostDraft
 
 @pytest.fixture
 def x_provider():

@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional, Any
-from influencerpy.core.models import ContentItem, PostDraft, Platform
+from influencerpy.types.models import ContentItem, PostDraft, Platform
 
 class SocialProvider(ABC):
     """Abstract base class for social media platforms."""

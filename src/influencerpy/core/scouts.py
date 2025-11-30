@@ -18,15 +18,16 @@ from influencerpy.providers.gemini import GeminiProvider
 from influencerpy.providers.anthropic import AnthropicProvider
 from influencerpy.config import ConfigManager
 from influencerpy.logger import get_scout_logger
-from influencerpy.database import get_session, ScoutModel, ScoutFeedbackModel, ScoutCalibrationModel
-from influencerpy.core.models import ContentItem
+from influencerpy.database import get_session
+from influencerpy.types.schema import ScoutModel, ScoutFeedbackModel, ScoutCalibrationModel
+from influencerpy.types.models import ContentItem
 from influencerpy.types.scout import ScoutResponse
 from influencerpy.core.telemetry import setup_langfuse
 from sqlmodel import select
 
 # Import new prompt components
 from influencerpy.core.prompts import SystemPrompt
-from influencerpy.core.prompt_templates import (
+from influencerpy.types.prompts import (
     GENERAL_GUARDRAILS,
     build_tool_prompt,
     get_platform_instructions,
@@ -36,6 +37,9 @@ class ScoutManager:
     def __init__(self):
         self.session = next(get_session())
         self.config_manager = ConfigManager()
+        # Initialize embedding manager (lazy load)
+        from influencerpy.core.embeddings import EmbeddingManager
+        self.embedding_manager = EmbeddingManager()
 
     def _get_agent_provider(self, provider_name: str = None, model_id: str = None, temperature: float = 0.7) -> AgentProvider:
         """Factory to get the appropriate agent provider."""
@@ -340,6 +344,15 @@ The tool will save the image and return the path (or you can infer it from the t
                             
                             data = response.structured_output.items
                             for i, entry in enumerate(data):
+                                # Check for duplicates via embeddings
+                                content_text = f"{entry.title} {entry.summary or ''}"
+                                if self.embedding_manager.is_similar(content_text):
+                                    logger.info(f"Skipping duplicate content: {entry.title}")
+                                    continue
+                                    
+                                # Index the new content
+                                self.embedding_manager.add_item(content_text, source_type="retrieved")
+                                
                                 items.append(ContentItem(
                                     source_id=f"scout_gen_{int(datetime.utcnow().timestamp())}_{i}",
                                     title=entry.title,
@@ -347,7 +360,7 @@ The tool will save the image and return the path (or you can infer it from the t
                                     summary=entry.summary,
                                     metadata={"sources": entry.sources, "image_path": entry.image_path}
                                 ))
-                            logger.info(f"Agent found {len(items)} items.")
+                            logger.info(f"Agent found {len(items)} items (after deduplication).")
                                 
                         except Exception as e:
                             logger.error(f"Agent execution failed: {e}", exc_info=True)
@@ -585,9 +598,55 @@ CRITICAL OUTPUT INSTRUCTIONS:
         
         try:
             agent = self._get_agent_provider(provider_name, model_id, temperature)
-            return agent.generate(prompt)
+            draft = agent.generate(prompt)
+            
+            # Index the generated draft to prevent self-plagiarism
+            self.embedding_manager.add_item(draft, source_type="generated")
+            
+            return draft
         except Exception as e:
             # Propagate ValueError for missing key handling in main.py
             if "GEMINI_API_KEY" in str(e):
                 raise ValueError("GEMINI_API_KEY not found")
             return f"{item.title}\n{item.url} (Error generating draft: {e})"
+
+    def regenerate_draft_from_feedback(self, post_content: str, feedback: str, platform: str = "x") -> str:
+        """Regenerate a draft based on user feedback."""
+        # Build system prompt
+        system_prompt = SystemPrompt(
+            general_instructions=GENERAL_GUARDRAILS,
+            tool_instructions="",
+            platform_instructions=get_platform_instructions(platform),
+            user_instructions="Refine the social media post based on user feedback."
+        )
+        
+        prompt = system_prompt.build()
+        
+        prompt += f"""
+        
+        Original Draft:
+        "{post_content}"
+        
+        User Feedback:
+        "{feedback}"
+        
+        Task:
+        Rewrite the draft to incorporate the feedback.
+        Keep the same core message unless the feedback says otherwise.
+        
+        CRITICAL OUTPUT INSTRUCTIONS:
+        1. Output ONLY the raw text of the new post.
+        2. Do NOT use markdown code blocks.
+        3. Start directly with the first word.
+        """
+        
+        try:
+            agent = self._get_agent_provider() # Use default provider
+            new_draft = agent.generate(prompt)
+            
+            # Index the new draft
+            self.embedding_manager.add_item(new_draft, source_type="generated")
+            
+            return new_draft
+        except Exception as e:
+            return f"Error regenerating draft: {e}"

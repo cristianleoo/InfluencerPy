@@ -3,14 +3,15 @@ import asyncio
 import logging
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 from sqlmodel import select
-from influencerpy.database import get_session, PostModel, ScoutModel
+from influencerpy.database import get_session
+from influencerpy.types.schema import PostModel, ScoutModel, ScoutFeedbackModel
 import json
 from influencerpy.platforms.x_platform import XProvider
 from influencerpy.channels.base import BaseChannel
 from influencerpy.core.scouts import ScoutManager
-from influencerpy.core.models import Platform, PostDraft
+from influencerpy.types.models import Platform, PostDraft
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +21,7 @@ class TelegramChannel(BaseChannel):
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
         self.application = None
         self.scout_manager = ScoutManager()
+        self.waiting_for_feedback = {} # {user_id: post_id}
 
     async def start(self):
         """Start the Telegram bot."""
@@ -35,6 +37,7 @@ class TelegramChannel(BaseChannel):
         self.application.add_handler(CommandHandler("check", self._check_command))
         self.application.add_handler(CommandHandler("scouts", self._list_scouts_command))
         self.application.add_handler(CallbackQueryHandler(self._button_callback))
+        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
         # Job queue to check for posts every minute
         if self.application.job_queue:
@@ -77,6 +80,9 @@ class TelegramChannel(BaseChannel):
             [
                 InlineKeyboardButton("✅ Confirm", callback_data=f"confirm_{post.id}"),
                 InlineKeyboardButton("❌ Reject", callback_data=f"reject_{post.id}"),
+            ],
+            [
+                InlineKeyboardButton("💬 Feedback / Edit", callback_data=f"feedback_{post.id}"),
             ]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -177,6 +183,9 @@ class TelegramChannel(BaseChannel):
                     [
                         InlineKeyboardButton("✅ Confirm", callback_data=f"confirm_{post.id}"),
                         InlineKeyboardButton("❌ Reject", callback_data=f"reject_{post.id}"),
+                    ],
+                    [
+                        InlineKeyboardButton("💬 Feedback / Edit", callback_data=f"feedback_{post.id}"),
                     ]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
@@ -242,6 +251,66 @@ class TelegramChannel(BaseChannel):
                 session.commit()
                 await query.edit_message_text("🚫 Post rejected.")
 
+            elif action == "feedback":
+                user_id = query.from_user.id
+                self.waiting_for_feedback[user_id] = post.id
+                await query.message.reply_text(
+                    "Please reply to this message with your feedback or instructions to improve the post.\n"
+                    "Example: 'Make it shorter', 'Add hashtags', 'Change tone to professional'"
+                )
+
+    async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle text messages (for feedback loop)."""
+        user_id = update.effective_user.id
+        
+        if user_id in self.waiting_for_feedback:
+            post_id = self.waiting_for_feedback.pop(user_id)
+            feedback = update.message.text
+            
+            await update.message.reply_text("🔄 Regenerating draft based on your feedback... Please wait.")
+            
+            with next(get_session()) as session:
+                post = session.get(PostModel, post_id)
+                if not post:
+                    await update.message.reply_text("❌ Post not found (might have been deleted).")
+                    return
+                
+                # Save feedback if linked to a scout
+                if post.scout_id:
+                    try:
+                        fb = ScoutFeedbackModel(
+                            scout_id=post.scout_id,
+                            content_url=f"draft:{post.id}", # Placeholder since we track draft refinement
+                            action="refinement",
+                            feedback_text=feedback,
+                            created_at=datetime.utcnow()
+                        )
+                        session.add(fb)
+                        # Commit later with post update
+                    except Exception as e:
+                        logger.error(f"Failed to save feedback: {e}")
+
+                # Run regeneration in thread
+                try:
+                    def regenerate_logic():
+                        manager = ScoutManager() # New instance for thread safety
+                        return manager.regenerate_draft_from_feedback(post.content, feedback, post.platform)
+                    
+                    new_content = await asyncio.to_thread(regenerate_logic)
+                    
+                    # Update Post
+                    post.content = new_content
+                    # Status remains 'reviewing' or 'pending_review'
+                    session.add(post)
+                    session.commit()
+                    
+                    # Re-send review card
+                    await self.send_review_request(post)
+                    
+                except Exception as e:
+                    logger.error(f"Error regenerating post: {e}", exc_info=True)
+                    await update.message.reply_text(f"❌ Error regenerating post: {e}")
+                    
     async def _handle_run_scout(self, query, scout_id: int):
         """Handle the run scout action."""
         # Get scout
@@ -300,7 +369,8 @@ class TelegramChannel(BaseChannel):
                         content=draft_content,
                         platform=primary_platform,
                         status="pending_review",
-                        created_at=datetime.utcnow()
+                        created_at=datetime.utcnow(),
+                        scout_id=scout.id
                     )
                     session.add(db_post)
                     session.commit()
@@ -336,6 +406,9 @@ class TelegramChannel(BaseChannel):
                     [
                         InlineKeyboardButton("✅ Confirm", callback_data=f"confirm_{post.id}"),
                         InlineKeyboardButton("❌ Reject", callback_data=f"reject_{post.id}"),
+                    ],
+                    [
+                        InlineKeyboardButton("💬 Feedback / Edit", callback_data=f"feedback_{post.id}"),
                     ]
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)

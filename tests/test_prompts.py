@@ -1,6 +1,6 @@
 """Test the SystemPrompt dataclass."""
 from influencerpy.core.prompts import SystemPrompt
-from influencerpy.core.prompt_templates import (
+from influencerpy.types.prompts import (
     GENERAL_GUARDRAILS,
     build_tool_prompt,
     get_platform_instructions,

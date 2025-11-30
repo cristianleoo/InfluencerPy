@@ -1,6 +1,6 @@
 import requests
 from strands import tool
-from typing import List, Dict, Union, Optional
+from typing import List, Dict, Union
 from datetime import datetime
 
 @tool

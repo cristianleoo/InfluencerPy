@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from influencerpy.core.scheduler import ScoutScheduler
-from influencerpy.database import ScoutModel
+from influencerpy.types.schema import ScoutModel
 
 def test_scheduler_load_jobs():
     """Test loading jobs from scouts."""

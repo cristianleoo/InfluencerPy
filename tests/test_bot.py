@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from influencerpy.bot import check_pending_posts, button_callback
-from influencerpy.database import PostModel
+from influencerpy.types.schema import PostModel
 
 @pytest.mark.asyncio
 async def test_check_pending_posts():

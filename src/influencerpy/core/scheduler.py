@@ -3,7 +3,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from influencerpy.core.scouts import ScoutManager
 from influencerpy.logger import get_app_logger
-from influencerpy.database import ScoutModel
+from influencerpy.types.schema import ScoutModel
 
 logger = get_app_logger("scheduler")
 
@@ -80,7 +80,8 @@ class ScoutScheduler:
                     draft_text = await asyncio.to_thread(self.manager.generate_draft, scout, best_item)
                     
                     # Save draft to DB
-                    from influencerpy.database import get_session, PostModel
+                    from influencerpy.database import get_session
+                    from influencerpy.types.schema import PostModel
                     from datetime import datetime
                     import json
                     
@@ -93,7 +94,8 @@ class ScoutScheduler:
                             content=draft_text,
                             platform=primary_platform,
                             status="pending_review",
-                            created_at=datetime.utcnow()
+                            created_at=datetime.utcnow(),
+                            scout_id=scout.id
                         )
                         session.add(db_post)
                         session.commit()

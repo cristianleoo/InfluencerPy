@@ -17,9 +17,10 @@ from sqlmodel import select
 from strands_tools import rss
 
 from influencerpy.config import ENV_FILE, PACKAGE_ROOT, PROJECT_ROOT
-from influencerpy.core.models import Platform, PostDraft
+from influencerpy.types.models import Platform, PostDraft
 from influencerpy.core.scouts import ScoutManager
-from influencerpy.database import PostModel, create_db_and_tables, get_session
+from influencerpy.database import create_db_and_tables, get_session
+from influencerpy.types.schema import PostModel
 from influencerpy.logger import get_app_logger
 from influencerpy.platforms.x_platform import XProvider
 
@@ -865,7 +866,7 @@ def _create_scout_flow(manager):
         "Schedule:",
         choices=[
             questionary.Choice("None (Manual Run)", value=None),
-            questionary.Choice("Daily (Every morning)", value="0 9 * * *"),
+            questionary.Choice("Daily (Select time)", value="daily_custom"),
             questionary.Choice("Hourly", value="0 * * * *"),
             questionary.Choice("Create with AI", value="interactive"),
             questionary.Choice("Custom Cron (Advanced)", value="custom"),
@@ -877,6 +878,19 @@ def _create_scout_flow(manager):
         schedule_cron = questionary.text(
             "Enter Cron Expression (e.g. '0 12 * * 1'):"
         ).unsafe_ask()
+    elif schedule_choice == "daily_custom":
+        time_str = questionary.text(
+            "At what time? (HH:MM, 24h format):",
+            default="09:00",
+            validate=lambda val: True if len(val.split(":")) == 2 else "Please enter time in HH:MM format"
+        ).unsafe_ask()
+        try:
+            hour, minute = map(int, time_str.split(":"))
+            schedule_cron = f"{minute} {hour} * * *"
+        except:
+            console.print("[yellow]Invalid time format. Defaulting to 09:00[/yellow]")
+            schedule_cron = "0 9 * * *"
+            
     elif schedule_choice == "interactive":
         schedule_cron = _build_custom_schedule()
 
@@ -1733,7 +1747,7 @@ def _update_scout_flow(manager, scout):
             "New Schedule:",
             choices=[
                 questionary.Choice("None (Manual Run)", value="none"),
-                questionary.Choice("Daily (Every morning)", value="0 9 * * *"),
+                questionary.Choice("Daily (Select time)", value="daily_custom"),
                 questionary.Choice("Hourly", value="0 * * * *"),
                 questionary.Choice("Create with AI", value="interactive"),
                 questionary.Choice("Custom Cron (Advanced)", value="custom"),
@@ -1747,6 +1761,18 @@ def _update_scout_flow(manager, scout):
             new_cron = questionary.text(
                 "Enter Cron Expression:", default=scout.schedule_cron or ""
             ).unsafe_ask()
+        elif schedule_choice == "daily_custom":
+            time_str = questionary.text(
+                "At what time? (HH:MM, 24h format):",
+                default="09:00",
+                validate=lambda val: True if len(val.split(":")) == 2 else "Please enter time in HH:MM format"
+            ).unsafe_ask()
+            try:
+                hour, minute = map(int, time_str.split(":"))
+                new_cron = f"{minute} {hour} * * *"
+            except:
+                console.print("[yellow]Invalid time format. Defaulting to 09:00[/yellow]")
+                new_cron = "0 9 * * *"
         elif schedule_choice == "interactive":
             new_cron = _build_custom_schedule()
         else:

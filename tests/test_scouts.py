@@ -2,7 +2,7 @@ import pytest
 import json
 from unittest.mock import MagicMock, patch
 from influencerpy.core.scouts import ScoutManager
-from influencerpy.database import ScoutModel
+from influencerpy.types.schema import ScoutModel
 
 def test_create_scout(session, config_manager):
     manager = ScoutManager()

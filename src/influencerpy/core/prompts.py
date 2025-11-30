@@ -1,5 +1,6 @@
 """System prompt dataclass for structured prompt composition."""
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Dict, Any
 
 
@@ -31,6 +32,10 @@ class SystemPrompt:
         Returns:
             Complete system prompt string
         """
+        # Ensure date is always present in context
+        if "date" not in context:
+            context["date"] = datetime.utcnow().strftime('%Y-%m-%d')
+
         sections = []
         
         if self.general_instructions:

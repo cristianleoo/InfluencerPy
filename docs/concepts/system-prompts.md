@@ -72,7 +72,7 @@ When a scout runs, the system builds the final prompt using the `SystemPrompt` d
 
 ```python
 from influencerpy.core.prompts import SystemPrompt
-from influencerpy.core.prompt_templates import (
+from influencerpy.types.prompts import (
     GENERAL_GUARDRAILS,
     build_tool_prompt,
     get_platform_instructions
@@ -154,7 +154,7 @@ Your instruction will be combined with system guardrails, tool guidance, and pla
 
 To add a new platform (e.g., Instagram):
 
-1. Edit `src/influencerpy/core/prompt_templates.py`
+1. Edit `src/influencerpy.types.prompts.py`
 2. Add to `PLATFORM_INSTRUCTIONS` dictionary:
    ```python
    "instagram": """OUTPUT FORMAT FOR INSTAGRAM:
