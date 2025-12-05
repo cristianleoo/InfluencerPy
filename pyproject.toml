@@ -35,7 +35,8 @@ dependencies = [
   "strands-agents-tools[local_chromium_browser]",
   "langfuse",
   "sentence-transformers",
-
+  "torch>=2.0.0,<2.3.0",
+  "numpy<2",
 ]
 
 [project.scripts]

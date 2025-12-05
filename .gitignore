@@ -211,3 +211,4 @@ __marimo__/
 *.sqlite3
 .influencerpy/
 example/
+uv.lock
