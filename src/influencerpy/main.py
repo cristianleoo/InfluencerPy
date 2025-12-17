@@ -1,5 +1,6 @@
 import json
 import os
+import stat
 import time
 from datetime import datetime
 from pathlib import Path
@@ -24,9 +25,25 @@ from influencerpy.types.schema import PostModel
 from influencerpy.logger import get_app_logger
 from influencerpy.platforms.x_platform import XProvider
 
-if ENV_FILE.exists():
-    load_dotenv(dotenv_path=ENV_FILE, override=True)
-else:
+# Safely check and load .env file, handling permission errors
+try:
+    if ENV_FILE.exists():
+        load_dotenv(dotenv_path=ENV_FILE, override=True)
+    else:
+        load_dotenv(override=True)
+except (PermissionError, OSError):
+    # If we can't access the file due to permissions, try to ensure directory exists
+    # and then load from environment variables only
+    try:
+        config_dir = ENV_FILE.parent
+        if not config_dir.exists():
+            config_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
+    except Exception:
+        pass  # Ignore errors during early initialization
+    # Fall back to loading from environment variables
+    load_dotenv(override=True)
+except Exception:
+    # For any other error, fall back to loading from environment
     load_dotenv(override=True)
 
 app = typer.Typer(name="influencerpy", help="Premium Social Media Automation CLI")
@@ -280,24 +297,57 @@ def _review_pending_flow():
 
 
 def _ensure_env_file():
-    if ENV_FILE.exists() and ENV_FILE.is_dir():
-        console.print("[bold red]Error: .env is a directory![/bold red]")
-        console.print(
-            "[yellow]This usually happens with Docker if you mounted a volume incorrectly.[/yellow]"
-        )
-        console.print(
-            "Please ensure you are mounting the configuration directory correctly."
-        )
-        import sys
+    """Ensure the .env file and its parent directory exist with proper permissions."""
+    try:
+        # Check if .env is incorrectly a directory
+        if ENV_FILE.exists() and ENV_FILE.is_dir():
+            console.print("[bold red]Error: .env is a directory![/bold red]")
+            console.print(
+                "[yellow]This usually happens with Docker if you mounted a volume incorrectly.[/yellow]"
+            )
+            console.print(
+                "Please ensure you are mounting the configuration directory correctly."
+            )
+            import sys
 
-        sys.exit(1)
+            sys.exit(1)
 
-    if not ENV_FILE.parent.exists():
-        ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+        # Ensure parent directory exists with proper permissions
+        config_dir = ENV_FILE.parent
+        if not config_dir.exists():
+            config_dir.mkdir(parents=True, exist_ok=True, mode=0o755)
+        else:
+            # If directory exists but we don't have permission, try to fix it
+            try:
+                # Test if we can write to the directory
+                test_file = config_dir / ".test_write"
+                test_file.touch()
+                test_file.unlink()
+            except PermissionError:
+                # Try to fix permissions (this may fail if we're not the owner)
+                try:
+                    import stat
+                    os.chmod(config_dir, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+                except Exception:
+                    # If we can't fix permissions, raise a helpful error
+                    raise PermissionError(
+                        f"Cannot access {config_dir}. "
+                        f"Please check directory permissions or run: "
+                        f"sudo chown -R $USER:$USER {config_dir.parent}"
+                    )
 
-    if not os.path.exists(ENV_FILE):
-        with open(ENV_FILE, "w") as f:
-            f.write("")
+        # Create .env file if it doesn't exist
+        if not ENV_FILE.exists():
+            ENV_FILE.touch(mode=0o600)  # Read/write for owner only
+            ENV_FILE.write_text("")  # Initialize as empty file
+            
+    except PermissionError as e:
+        # Re-raise with helpful message
+        raise PermissionError(
+            f"Cannot create or access {ENV_FILE}. "
+            f"Please check permissions or run: "
+            f"sudo chown -R $USER:$USER {ENV_FILE.parent.parent}"
+        ) from e
 
 
 def _calibrate_scout_flow(manager, scout_name: str = None):
