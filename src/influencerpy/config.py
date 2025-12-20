@@ -25,6 +25,10 @@ DEFAULT_CONFIG = {
             "provider": "gemini",
             "model": "gemini-2.5-flash-lite"
         }
+    },
+    "embeddings": {
+        "enabled": True,
+        "model_name": None  # None = auto-select based on memory
     }
 }
 

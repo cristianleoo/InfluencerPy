@@ -2276,6 +2276,40 @@ def _setup_config_wizard():
         ).unsafe_ask()
         config_manager.set("ai.providers.anthropic.default_model", model_id)
 
+    # Configure Embeddings
+    console.print("\n[bold cyan]Embeddings Configuration[/bold cyan]")
+    current_embeddings_enabled = config_manager.get("embeddings.enabled", True)
+    embeddings_enabled = questionary.confirm(
+        "Enable content deduplication via embeddings? (Disable for low-memory environments)",
+        default=current_embeddings_enabled
+    ).unsafe_ask()
+    config_manager.set("embeddings.enabled", embeddings_enabled)
+    
+    if embeddings_enabled:
+        current_model_name = config_manager.get("embeddings.model_name")
+        model_options = [
+            "auto (select based on available memory)",
+            "paraphrase-MiniLM-L3-v2 (smallest, ~40MB)",
+            "all-MiniLM-L6-v2 (default, ~80MB)",
+        ]
+        default_idx = 0 if current_model_name is None else (
+            1 if current_model_name == "paraphrase-MiniLM-L3-v2" else 2
+        )
+        model_choice = questionary.select(
+            "Embedding model:",
+            choices=model_options,
+            default=model_options[default_idx]
+        ).unsafe_ask()
+        
+        if model_choice == model_options[0]:
+            config_manager.set("embeddings.model_name", None)
+        elif model_choice == model_options[1]:
+            config_manager.set("embeddings.model_name", "paraphrase-MiniLM-L3-v2")
+        else:
+            config_manager.set("embeddings.model_name", "all-MiniLM-L6-v2")
+    else:
+        console.print("[yellow]Embeddings disabled. Only exact hash matching will be used for deduplication.[/yellow]")
+
     console.print("\n[green]Configuration saved successfully![/green]")
     time.sleep(1.5)
 
