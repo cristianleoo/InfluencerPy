@@ -111,8 +111,196 @@ class ScoutManager:
         """Get a scout by name."""
         return self.session.exec(select(ScoutModel).where(ScoutModel.name == name)).first()
 
+    def _execute_agent_run(self, scout: ScoutModel, config: dict, agent_tools: list, limit: int, 
+                          override_query: str = None, retry_attempt: int = 0, retry_modifications: dict = None) -> List[ContentItem]:
+        """Execute a single agent run and return deduplicated items."""
+        logger = get_scout_logger(scout.name)
+        items = []
+        
+        try:
+            gen_config = config.get("generation_config", {})
+            provider_name = gen_config.get("provider", "gemini")
+                
+            model_id = gen_config.get("model_id", "gemini-2.5-flash") # Default for tools
+            # Get the provider/model
+            temperature = gen_config.get("temperature", 0.7)
+            provider = self._get_agent_provider(provider_name, model_id, temperature)
+            model = provider.get_model()
+            
+            # Build trace attributes for Langfuse
+            trace_attributes = {
+                "session.id": scout.name,  # Scout name as session ID
+                "user.id": "influencerpy",  # Application identifier
+                "langfuse.tags": [
+                    f"scout-type:{scout.type}",
+                    f"provider:{provider_name}",
+                    f"model:{model_id or 'default'}"
+                ]
+            }
+            
+            # Initialize agent with tools and tracing
+            agent = Agent(
+                model=model,
+                tools=agent_tools,
+                structured_output_model=None,
+                callback_handler=null_callback_handler(),
+                trace_attributes=trace_attributes
+            )
+            
+            # Apply retry modifications if any
+            query = override_query or config.get("query")
+            url = config.get("url")
+            feeds = config.get("feeds", [])
+            subreddits = config.get("subreddits", [])
+            tools_config = config.get("tools", [])
+            
+            if retry_modifications:
+                if "query" in retry_modifications:
+                    query = retry_modifications["query"]
+                if "feeds" in retry_modifications:
+                    feeds = retry_modifications["feeds"]
+                if "subreddits" in retry_modifications:
+                    subreddits = retry_modifications["subreddits"]
+            
+            if scout.type == "meta":
+                orchestration_prompt = config.get("orchestration_prompt", "Coordinate the available tools to find interesting content.")
+                goal = f"Orchestrate the available tools to: {orchestration_prompt}."
+                if override_query or query:
+                    goal += f" Focus on: '{override_query or query}'."
+            elif url:
+                goal = f"Analyze the content at: {url}. Use the 'browser' tool to navigate to the URL and extract the text."
+                if query:
+                    goal += f" Focus on: '{query}'."
+            elif feeds:
+                goal = "Find interesting content from your subscribed RSS feeds. Use the 'rss' tool to list available feeds and read them."
+                if query:
+                    goal += f" Filter for content related to: '{query}'."
+                if retry_attempt > 0:
+                    goal += " Try exploring different feeds or looking further back in time to find new content."
+            elif subreddits:
+                sub_list = ", ".join(subreddits)
+                goal = f"Find interesting content from the following subreddits: {sub_list}. Use the 'reddit' tool."
+                if query:
+                    goal += f" Filter for content related to: '{query}'."
+                if retry_attempt > 0:
+                    goal += " Try exploring different topics or sorting methods to find new content."
+            elif "arxiv" in tools_config:
+                date_filter = config.get("date_filter")
+                days_back_map = {
+                    "today": 1,
+                    "week": 7,
+                    "month": 30
+                }
+                days_back = days_back_map.get(date_filter)
+                
+                # On retry, expand the date range
+                if retry_attempt > 0 and days_back:
+                    days_back = min(days_back * 2, 90)  # Expand but cap at 90 days
+                
+                goal = f"Find research papers about: \"{query or 'latest research'}\". Use the 'arxiv' tool."
+                if days_back:
+                    goal += f" Filter for papers from the last {days_back} days."
+                if retry_attempt > 0:
+                    goal += " Try different search terms or categories to find new papers."
+            else:
+                goal = f"Find interesting content about: \"{query or 'latest news'}\""
+                if retry_attempt > 0:
+                    goal += " Try different search terms or angles to find new content."
+            
+            # Use custom prompt_template if provided, otherwise use auto-generated goal
+            user_instructions = scout.prompt_template or goal
+            
+            # Build structured system prompt
+            system_prompt = SystemPrompt(
+                general_instructions=GENERAL_GUARDRAILS,
+                tool_instructions=build_tool_prompt(tools_config),
+                platform_instructions="",  # No platform formatting for content discovery
+                user_instructions=user_instructions
+            )
+            
+            # Build final prompt with context
+            prompt = system_prompt.build(
+                date=datetime.utcnow().strftime('%Y-%m-%d'),
+                limit=limit
+            )
+            
+            # Add image generation instructions if enabled
+            if config.get("image_generation"):
+                prompt += """
+
+ALSO: Generate an image that represents the most interesting content you found.
+Use the 'generate_image_stability' tool.
+The image should be high quality and relevant to the content.
+
+In your output, populate the "image_path" field for the item that corresponds to the generated image.
+The tool will save the image and return the path (or you can infer it from the tool output).
+                                If no image was generated, omit the field.
+                                """
+            
+            if retry_attempt > 0:
+                logger.info(f"Retry attempt {retry_attempt}: Executing agent with modified parameters...")
+            else:
+                logger.info("Executing agent...")
+            response = agent(prompt, structured_output_model=ScoutResponse)
+            logger.info("Agent execution completed.")
+            
+            data = response.structured_output.items
+            for i, entry in enumerate(data):
+                # Check for duplicates via embeddings
+                content_text = f"{entry.title} {entry.summary or ''}"
+                if self.embedding_manager.is_similar(content_text):
+                    logger.info(f"Skipping duplicate content: {entry.title}")
+                    continue
+                    
+                # Index the new content
+                self.embedding_manager.add_item(content_text, source_type="retrieved")
+                
+                items.append(ContentItem(
+                    source_id=f"scout_gen_{int(datetime.utcnow().timestamp())}_{i}",
+                    title=entry.title,
+                    url=entry.url,
+                    summary=entry.summary,
+                    metadata={"sources": entry.sources, "image_path": entry.image_path}
+                ))
+            logger.info(f"Agent found {len(items)} items (after deduplication).")
+                
+        except Exception as e:
+            logger.error(f"Agent execution failed: {e}", exc_info=True)
+        
+        return items
+
+    def _generate_retry_modifications(self, scout: ScoutModel, config: dict, query: str, retry_attempt: int) -> dict:
+        """Generate modifications for retry attempts to find different content."""
+        modifications = {}
+        
+        # For RSS scouts, try different feeds or increase time range
+        if config.get("feeds"):
+            # On retry, suggest exploring different feeds
+            modifications["query"] = query + " (try different feeds or older entries)" if query else "try different feeds or older entries"
+        
+        # For search-based scouts, modify the query slightly
+        elif query and "arxiv" not in config.get("tools", []):
+            # Try adding variations to the query
+            variations = [
+                query + " recent developments",
+                query + " latest updates",
+                query + " new findings",
+                "alternative perspectives on " + query
+            ]
+            if retry_attempt <= len(variations):
+                modifications["query"] = variations[retry_attempt - 1]
+        
+        # For arxiv scouts, expand date range is handled in goal construction
+        
+        return modifications
+
     def run_scout(self, scout: ScoutModel, limit: int = 10, override_query: str = None, override_config: dict = None) -> List[ContentItem]:
-        """Execute a scout to fetch content."""
+        """Execute a scout to fetch content.
+        
+        If all items found are duplicates, the scout will automatically retry with modified
+        parameters (e.g., different query variations, expanded date ranges, different feeds).
+        The number of retries is configurable via the 'max_retries' config option (default: 2).
+        """
         logger = get_scout_logger(scout.name)
         logger.info(f"Starting scout run: {scout.name}")
         
@@ -239,131 +427,45 @@ class ScoutManager:
                     ))
 
                 if agent_tools:
-                        logger.info(f"Initializing agent with tools: {[t.tool_name for t in agent_tools]}")
-                        try:
-                            gen_config = config.get("generation_config", {})
-                            provider_name = gen_config.get("provider", "gemini")
-                                
-                            model_id = gen_config.get("model_id", "gemini-2.5-flash") # Default for tools
-                            # Get the provider/model
-                            temperature = gen_config.get("temperature", 0.7)
-                            provider = self._get_agent_provider(provider_name, model_id, temperature)
-                            model = provider.get_model()
-                            
-                            # Build trace attributes for Langfuse
-                            trace_attributes = {
-                                "session.id": scout.name,  # Scout name as session ID
-                                "user.id": "influencerpy",  # Application identifier
-                                "langfuse.tags": [
-                                    f"scout-type:{scout.type}",
-                                    f"provider:{provider_name}",
-                                    f"model:{model_id or 'default'}"
-                                ]
-                            }
-                            
-                            # Initialize agent with tools and tracing
-                            agent = Agent(
-                                model=model,
-                                tools=agent_tools,
-                                structured_output_model=None,
-                                callback_handler=null_callback_handler(),
-                                trace_attributes=trace_attributes
-                            )
-                            
-                            query = override_query or config.get("query")
-                            url = config.get("url")
-                            feeds = config.get("feeds", [])
-                            subreddits = config.get("subreddits", [])
-                            
-                            if scout.type == "meta":
-                                orchestration_prompt = config.get("orchestration_prompt", "Coordinate the available tools to find interesting content.")
-                                goal = f"Orchestrate the available tools to: {orchestration_prompt}."
-                                if override_query:
-                                    goal += f" Focus on: '{override_query}'."
-                            elif url:
-                                goal = f"Analyze the content at: {url}. Use the 'browser' tool to navigate to the URL and extract the text."
-                                if query:
-                                    goal += f" Focus on: '{query}'."
-                            elif feeds:
-                                goal = "Find interesting content from your subscribed RSS feeds. Use the 'rss' tool to list available feeds and read them."
-                                if query:
-                                    goal += f" Filter for content related to: '{query}'."
-                            elif subreddits:
-                                sub_list = ", ".join(subreddits)
-                                goal = f"Find interesting content from the following subreddits: {sub_list}. Use the 'reddit' tool."
-                                if query:
-                                    goal += f" Filter for content related to: '{query}'."
-                            elif "arxiv" in tools_config:
-                                date_filter = config.get("date_filter")
-                                days_back_map = {
-                                    "today": 1,
-                                    "week": 7,
-                                    "month": 30
-                                }
-                                days_back = days_back_map.get(date_filter)
-                                
-                                goal = f"Find research papers about: \"{query or 'latest research'}\". Use the 'arxiv' tool."
-                                if days_back:
-                                    goal += f" Filter for papers from the last {days_back} days."
-                            else:
-                                goal = f"Find interesting content about: \"{query or 'latest news'}\""
-                            
-                            # Use custom prompt_template if provided, otherwise use auto-generated goal
-                            user_instructions = scout.prompt_template or goal
-                            
-                            # Build structured system prompt
-                            system_prompt = SystemPrompt(
-                                general_instructions=GENERAL_GUARDRAILS,
-                                tool_instructions=build_tool_prompt(tools_config),
-                                platform_instructions="",  # No platform formatting for content discovery
-                                user_instructions=user_instructions
-                            )
-                            
-                            # Build final prompt with context
-                            prompt = system_prompt.build(
-                                date=datetime.utcnow().strftime('%Y-%m-%d'),
-                                limit=limit
-                            )
-                            
-                            # Add image generation instructions if enabled
-                            if config.get("image_generation"):
-                                prompt += """
-
-ALSO: Generate an image that represents the most interesting content you found.
-Use the 'generate_image_stability' tool.
-The image should be high quality and relevant to the content.
-
-In your output, populate the "image_path" field for the item that corresponds to the generated image.
-The tool will save the image and return the path (or you can infer it from the tool output).
-                                If no image was generated, omit the field.
-                                """
-                            
-                            logger.info("Executing agent...")
-                            response = agent(prompt, structured_output_model=ScoutResponse)
-                            logger.info("Agent execution completed.")
-                            
-                            data = response.structured_output.items
-                            for i, entry in enumerate(data):
-                                # Check for duplicates via embeddings
-                                content_text = f"{entry.title} {entry.summary or ''}"
-                                if self.embedding_manager.is_similar(content_text):
-                                    logger.info(f"Skipping duplicate content: {entry.title}")
-                                    continue
-                                    
-                                # Index the new content
-                                self.embedding_manager.add_item(content_text, source_type="retrieved")
-                                
-                                items.append(ContentItem(
-                                    source_id=f"scout_gen_{int(datetime.utcnow().timestamp())}_{i}",
-                                    title=entry.title,
-                                    url=entry.url,
-                                    summary=entry.summary,
-                                    metadata={"sources": entry.sources, "image_path": entry.image_path}
-                                ))
-                            logger.info(f"Agent found {len(items)} items (after deduplication).")
-                                
-                        except Exception as e:
-                            logger.error(f"Agent execution failed: {e}", exc_info=True)
+                    logger.info(f"Initializing agent with tools: {[t.tool_name for t in agent_tools]}")
+                    
+                    # Get max retries from config (default 2)
+                    max_retries = config.get("max_retries", 2)
+                    query = override_query or config.get("query")
+                    
+                    # Initial run
+                    retry_attempt = 0
+                    items = self._execute_agent_run(
+                        scout, config, agent_tools, limit, override_query, retry_attempt
+                    )
+                    
+                    # Retry if all items were duplicates
+                    retry_count = 0
+                    while len(items) == 0 and retry_count < max_retries:
+                        retry_count += 1
+                        retry_attempt = retry_count
+                        
+                        logger.info(f"All items were duplicates. Retrying with different parameters (attempt {retry_count}/{max_retries})...")
+                        
+                        # Generate retry modifications
+                        retry_modifications = self._generate_retry_modifications(
+                            scout, config, query, retry_count
+                        )
+                        
+                        # Execute retry
+                        retry_items = self._execute_agent_run(
+                            scout, config, agent_tools, limit, override_query, retry_attempt, retry_modifications
+                        )
+                        
+                        if retry_items:
+                            items = retry_items
+                            logger.info(f"Retry successful! Found {len(items)} new items.")
+                            break
+                        else:
+                            logger.info(f"Retry {retry_count} found no new items.")
+                    
+                    if len(items) == 0 and retry_count > 0:
+                        logger.warning(f"All retry attempts exhausted. No new content found after {retry_count} retries.")
             
             # Update last run
             scout.last_run = datetime.utcnow()

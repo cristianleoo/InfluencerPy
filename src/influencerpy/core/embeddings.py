@@ -12,19 +12,63 @@ from influencerpy.logger import get_app_logger
 logger = get_app_logger("embeddings")
 
 class EmbeddingManager:
-    """Manages content embeddings and similarity checks."""
+    """Manages content embeddings and similarity checks.
+    
+    For low-memory environments (e.g., e2-micro with 1GB RAM), consider using:
+    - "paraphrase-MiniLM-L3-v2" (smallest, ~40MB, fastest)
+    - "all-MiniLM-L6-v2" (default, ~80MB, good balance)
+    - "Ayeshas21/sentence-transformers-all-MiniLM-L6-v2-quantized" (quantized, ~20MB, slower)
+    """
     
     _model: Optional[SentenceTransformer] = None
     
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
-        self.model_name = model_name
+    def __init__(self, model_name: str = None):
+        # Check config first, then auto-detect, then use default
+        if model_name is None:
+            try:
+                from influencerpy.config import ConfigManager
+                config_manager = ConfigManager()
+                model_name = config_manager.get("embeddings.model_name")
+            except Exception:
+                pass  # Config not available, continue with auto-detection
+        
+        if model_name is None:
+            # Auto-select based on available memory for low-memory environments
+            try:
+                import psutil
+                # Use available memory (not total) to better reflect actual constraints
+                available_memory_gb = psutil.virtual_memory().available / (1024**3)
+                
+                # Auto-select based on available memory
+                if available_memory_gb < 1.5:
+                    # Very constrained (e.g., e2-micro): use smallest model
+                    self.model_name = "paraphrase-MiniLM-L3-v2"
+                    logger.info(f"Low memory detected ({available_memory_gb:.1f}GB available). Using lightweight model: {self.model_name}")
+                else:
+                    # Default: balanced model
+                    self.model_name = "all-MiniLM-L6-v2"
+            except ImportError:
+                # psutil not available, use default
+                self.model_name = "all-MiniLM-L6-v2"
+                logger.debug("psutil not available, using default model. Install psutil for automatic model selection.")
+            except Exception as e:
+                # Fallback on any error
+                self.model_name = "all-MiniLM-L6-v2"
+                logger.debug(f"Could not detect memory, using default model: {e}")
+        else:
+            self.model_name = model_name
         
     @property
     def model(self) -> SentenceTransformer:
         """Lazy load the model."""
         if self._model is None:
             logger.info(f"Loading embedding model: {self.model_name}")
-            self._model = SentenceTransformer(self.model_name)
+            # Use CPU-only mode to reduce memory usage (no GPU overhead)
+            # This is especially important for low-memory instances
+            import os
+            os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")  # Force CPU
+            self._model = SentenceTransformer(self.model_name, device='cpu')
+            logger.info(f"Model loaded on CPU (memory-efficient mode)")
         return self._model
         
     def _compute_hash(self, text: str) -> str:
