@@ -203,7 +203,7 @@ class ScoutManager:
                 if query:
                     goal += f" Focus on: '{query}'."
             elif feeds:
-                goal = "Find interesting content from your subscribed RSS feeds. Use the 'rss' tool to list available feeds and read them."
+                goal = "Find interesting content from ALL your subscribed RSS feeds. Use the 'rss' tool to list available feeds, then read entries from EACH feed to gather diverse content across all sources."
                 if query:
                     goal += f" Filter for content related to: '{query}'."
                 if retry_attempt > 0:
@@ -788,8 +788,9 @@ Respond with ONLY the number of the best option (e.g., "1" or "2" or "3").
             output.append(f"🔗 **Source:** {item.url}")
             
             # Add additional sources if available
-            if item.sources and len(item.sources) > 0:
-                output.append(f"\n📎 **Related:** {', '.join(item.sources[:3])}")
+            sources = item.metadata.get("sources")
+            if sources and len(sources) > 0:
+                output.append(f"\n📎 **Related:** {', '.join(sources[:3])}")
             
             output.append("\n" + "-" * 50)
         

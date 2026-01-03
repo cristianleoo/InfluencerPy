@@ -22,8 +22,16 @@ Provide clear search queries related to the goal.""",
     "rss": """TOOL: rss
 Use this to interact with your RSS feeds.
 The necessary feeds are ALREADY subscribed.
-Step 1: Call rss(action='list') to see available feeds.
-Step 2: Call rss(action='read', feed_id=...) to get content from the relevant feed.
+
+RECOMMENDED APPROACH (for multiple feeds):
+- Call rss(action='read_all') to get entries from ALL subscribed feeds at once
+
+ALTERNATIVE APPROACH (for selective reading):
+- Step 1: Call rss(action='list') to see ALL available feeds
+- Step 2: Call rss(action='read', feed_id=...) to get content from each feed you want
+
+IMPORTANT: You should gather content from ALL feeds (not just one) to provide comprehensive coverage.
+For content discovery, aim to collect multiple entries from each feed for diverse perspectives.
 Do NOT try to fetch from URLs directly unless explicitly instructed.""",
     
     "reddit": """TOOL: reddit
@@ -105,7 +113,7 @@ def get_platform_instructions(platform: str) -> str:
 
 # Default user instructions for different scout types
 DEFAULT_USER_INSTRUCTIONS = {
-    "rss": "Find interesting content from the RSS feed and summarize key points.",
+    "rss": "Find interesting content from ALL subscribed RSS feeds and summarize key points from each source.",
     "reddit": "Find engaging discussions and highlight the most interesting insights.",
     "search": "Find recent, high-quality content about the specified topic.",
     "arxiv": "Find relevant research papers and explain their key contributions.",

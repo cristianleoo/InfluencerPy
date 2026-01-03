@@ -178,8 +178,8 @@ class TelegramChannel(BaseChannel):
         self.application = (
             Application.builder()
             .token(self.token)
-            .read_timeout(180)  # Increase read timeout to 30 seconds
-            .write_timeout(180)  # Increase write timeout to 30 seconds
+            .read_timeout(300)
+            .write_timeout(300)
             .build()
         )
 

@@ -946,24 +946,35 @@ def _create_scout_flow(manager):
         config["tools"] = ["google_search"]
     elif type_choice == "rss":
         while True:
-            feed = questionary.text("RSS Feed URL:").unsafe_ask()
+            feed = questionary.text("RSS Feed URL (or multiple URLs separated by comma):").unsafe_ask()
             # Validate using strands rss tool fetch
             try:
                 # Use local RSS tool for database persistence
                 from influencerpy.tools.rss import rss
 
-                with console.status("Validating feed..."):
-                    result = rss(action="fetch", url=feed, max_entries=1)
+                # Support multiple feeds separated by comma
+                feed_urls = [url.strip() for url in feed.split(",")]
+                validated_feeds = []
+                
+                for feed_url in feed_urls:
+                    with console.status(f"Validating feed: {feed_url}..."):
+                        result = rss(action="fetch", url=feed_url, max_entries=1)
 
-                if isinstance(result, list) and len(result) > 0:
+                    if isinstance(result, list) and len(result) > 0:
+                        validated_feeds.append(feed_url)
+                        console.print(f"[green]✓ Feed validated: {feed_url}[/green]")
+                    else:
+                        console.print(f"[red]✗ Invalid or empty feed: {feed_url}[/red]")
+                
+                if validated_feeds:
                     # Don't subscribe yet - we need the scout_id first
-                    # Store the feed URL in config for later subscription
-                    config["feeds"] = [feed]
+                    # Store the feed URLs in config for later subscription
+                    config["feeds"] = validated_feeds
                     config["tools"] = ["rss"]
-                    console.print(f"[green]Feed validated: {feed}[/green]")
+                    console.print(f"[green]Successfully validated {len(validated_feeds)} feed(s)[/green]")
                     break
                 else:
-                    console.print("[red]Invalid RSS feed or empty.[/red]")
+                    console.print("[red]No valid RSS feeds found.[/red]")
                     if not questionary.confirm("Try another URL?").unsafe_ask():
                         return
             except Exception as e:

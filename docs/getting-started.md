@@ -76,6 +76,7 @@ Let's create a content discovery scout:
 2. **Choose Intent**: Select **"🔍 Content Discovery"** (this finds and lists content)
 3. **Scout Type**: Choose a source (RSS, Reddit, Arxiv, etc.)
 4. **Configure Source**: Enter feed URLs, subreddits, or search queries
+   - **Tip**: For RSS feeds, you can add multiple feeds separated by commas (e.g., `https://feed1.com/rss, https://feed2.com/rss`)
 5. **Schedule**: Set when it should run (Daily, Weekly, or Manual)
 6. **Done!**: Your scout is ready
 
@@ -100,6 +101,68 @@ For **Scouting Intent** scouts, you'll receive:
 For **Generation Intent** scouts (optional), you'll receive:
 - Draft social media posts
 - Ready to post to X (Twitter) or copy/paste elsewhere
+
+## Example: Multi-Feed AI Research Scout
+
+Here's a complete example of creating a content discovery scout that monitors multiple AI research sources:
+
+### Configuration
+
+```
+Scout Name: AI Research Digest
+Intent: 🔍 Content Discovery (Scouting)
+Scout Type: 📡 RSS
+RSS Feed URLs: https://tldr.takara.ai/api/papers, https://bair.berkeley.edu/blog/feed.xml, https://research.google/blog/rss/, https://news.mit.edu/rss/topic/artificial-intelligence2, https://news.microsoft.com/source/topics/ai/feed/
+Schedule: Daily at 9:00 AM
+```
+
+### What This Does
+
+This scout will:
+
+1. **Monitor 5 AI research sources simultaneously**:
+   - Takara AI TLDR Papers
+   - Berkeley AI Research (BAIR) Blog
+   - Google Research Blog
+   - MIT AI News
+   - Microsoft AI News
+
+2. **Explore ALL feeds comprehensively**: The AI automatically reads entries from ALL 5 feeds (not just one), gathering diverse content across all sources
+
+3. **Analyze and select the best content**: The AI reviews articles from all feeds and selects the most relevant and interesting ones
+
+4. **Deliver a curated report** to Telegram with:
+   - Article titles and summaries
+   - Key insights from each piece
+   - Links to original sources
+   - Source attribution (showing which feed each article came from)
+   - Delivered every morning at 9 AM
+
+### Sample Output
+
+```
+# 📚 AI Research Digest - Content Discovery
+*Found 6 interesting items from 5 sources*
+
+## 1. New Advances in Multimodal Learning
+Summary: Researchers at Berkeley demonstrate significant improvements in vision-language models...
+🔗 Source: https://bair.berkeley.edu/blog/2025/...
+
+## 2. Scaling Language Models: Latest Insights
+Summary: Google Research shares findings on training efficiency...
+🔗 Source: https://research.google/blog/...
+
+[... more items ...]
+```
+
+### Why Multiple Feeds?
+
+- **Broader coverage**: Get diverse perspectives from academia and industry
+- **All feeds explored**: The agent automatically reads from ALL feeds, not just one
+- **Better selection**: More content from multiple sources means the AI can pick truly standout articles
+- **Single digest**: One consolidated report instead of multiple notifications
+- **Source attribution**: See which feed each article came from
+- **Efficient**: Set up once, runs automatically every day
 
 ## Next Steps
 

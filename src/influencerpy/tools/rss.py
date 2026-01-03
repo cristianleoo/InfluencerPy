@@ -108,18 +108,19 @@ class RSSManager:
         scout_id: Optional[int] = None,
     ) -> Dict:
         with next(get_session()) as session:
-            # Check if already exists for this scout
-            query = select(RSSFeedModel).where(RSSFeedModel.url == url)
-            if scout_id is not None:
-                query = query.where(RSSFeedModel.scout_id == scout_id)
-            existing = session.exec(query).first()
+            # Check if feed already exists (by URL alone, since URL has UNIQUE constraint)
+            existing = session.exec(
+                select(RSSFeedModel).where(RSSFeedModel.url == url)
+            ).first()
             
             if existing:
+                # Use the existing feed instead of creating a new one
+                scout_info = f" for scout {existing.scout_id}" if existing.scout_id else ""
                 return {
-                    "status": "error",
+                    "status": "success",
                     "content": [
                         {
-                            "text": f"Already subscribed to feed: {url} (ID: {existing.id})"
+                            "text": f"Using existing feed: {existing.title} (ID: {existing.id}){scout_info}"
                         }
                     ],
                 }
@@ -359,6 +360,72 @@ class RSSManager:
                 "title": feed.title,
                 "entries": filtered_entries,
             }
+    
+    def read_all_feeds(
+        self,
+        scout_id: Optional[int] = None,
+        max_entries_per_feed: int = 5,
+        include_content: bool = False,
+    ) -> List[Dict]:
+        """
+        Read entries from ALL subscribed feeds (optionally filtered by scout_id).
+        Returns a list of feed results, each containing entries from that feed.
+        
+        Args:
+            scout_id: Optional scout ID to filter feeds
+            max_entries_per_feed: Maximum entries to return per feed
+            include_content: Whether to include full content
+            
+        Returns:
+            List of dicts, each with feed info and its entries
+        """
+        with next(get_session()) as session:
+            query = select(RSSFeedModel)
+            if scout_id is not None:
+                query = query.where(RSSFeedModel.scout_id == scout_id)
+            
+            feeds = session.exec(query).all()
+            results = []
+            
+            for feed in feeds:
+                # Get entries for this feed
+                entry_query = (
+                    select(RSSEntryModel)
+                    .where(RSSEntryModel.feed_id == feed.id)
+                    .order_by(RSSEntryModel.published.desc())
+                    .limit(max_entries_per_feed)
+                )
+                entries = session.exec(entry_query).all()
+                
+                # Format entries
+                formatted_entries = []
+                for entry in entries:
+                    entry_dict = {
+                        "title": entry.title,
+                        "link": entry.link,
+                        "published": str(entry.published),
+                        "author": entry.author,
+                        "summary": entry.summary,
+                        "categories": (
+                            json.loads(entry.categories_json)
+                            if entry.categories_json
+                            else []
+                        ),
+                    }
+                    if include_content:
+                        entry_dict["content"] = entry.content
+                    formatted_entries.append(entry_dict)
+                
+                # Add feed result
+                results.append({
+                    "feed_id": str(feed.id),
+                    "feed_title": feed.title,
+                    "feed_url": feed.url,
+                    "entry_count": len(formatted_entries),
+                    "entries": formatted_entries,
+                })
+            
+            return results
 
     def search(
         self, query_text: str, max_entries: int = 10, include_content: bool = False
@@ -423,7 +490,8 @@ def rss(
     - subscribe: Add a feed to your subscription list
     - unsubscribe: Remove a feed subscription
     - list: List all subscribed feeds (filtered by scout context if available)
-    - read: Read entries from a subscribed feed
+    - read: Read entries from a single subscribed feed
+    - read_all: Read entries from ALL subscribed feeds (convenient for gathering diverse content)
     - update: Update feeds with new content
     - search: Find entries matching a query
     # - categories: List all categories/tags (Not implemented in DB version yet)
@@ -432,7 +500,7 @@ def rss(
         action: Action to perform
         url: URL of the RSS feed
         feed_id: ID of a subscribed feed
-        max_entries: Maximum number of entries to return
+        max_entries: Maximum number of entries to return (for read_all, this is per feed)
         include_content: Whether to include full content
         query: Search query
         category: Filter entries by category
@@ -495,6 +563,14 @@ def rss(
                 return {"status": "error", "content": [{"text": "feed_id is required"}]}
             return rss_manager.read_feed(
                 int(feed_id), max_entries, category, include_content
+            )
+        
+        elif action == "read_all":
+            # Read from all subscribed feeds (filtered by scout_id if available)
+            return rss_manager.read_all_feeds(
+                scout_id=scout_id,
+                max_entries_per_feed=max_entries,
+                include_content=include_content
             )
 
         elif action == "update":

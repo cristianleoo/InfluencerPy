@@ -4,7 +4,25 @@ This directory contains example scripts and demonstrations for InfluencerPy feat
 
 ## Available Examples
 
-### HTTP Tool Demo (`http_tool_demo.py`)
+### 1. Multi-Feed RSS Scout (`multi_rss_scout_example.md`)
+
+**NEW!** Comprehensive guide for creating a content discovery scout that monitors multiple RSS feeds simultaneously.
+
+**What it shows:**
+- How to add multiple RSS feeds in one scout (comma-separated)
+- Real-world example: AI Research Digest monitoring 5 sources
+- Expected validation output and daily report format
+- Customization tips and troubleshooting
+
+**Use case:**
+Monitor Berkeley AI Research, Google Research, MIT AI News, Microsoft AI, and Takara AI Papers in a single daily digest.
+
+**Read the guide:**
+```bash
+cat examples/multi_rss_scout_example.md
+```
+
+### 2. HTTP Tool Demo (`http_tool_demo.py`)
 
 Demonstrates the HTTP Request tool for web scraping and content extraction.
 
@@ -65,11 +83,12 @@ chmod +x examples/your_example.py
 
 Here are some ideas for additional examples:
 
+- ✅ **Multi-feed RSS Scout**: ✨ DONE! See `multi_rss_scout_example.md`
 - **Multi-tool Scout**: Demonstrate combining multiple tools (search + http + arxiv)
-- **RSS Monitor**: Show how to set up an RSS-based scout
 - **Reddit Sentiment**: Analyze Reddit posts for sentiment
 - **Automated Workflow**: Complete end-to-end content creation workflow
 - **Custom Tool**: Show how to create a custom tool
 - **Scheduling**: Demonstrate scout scheduling configuration
+- **Generation Intent**: Create social media posts from discovered content
 
 Feel free to contribute!

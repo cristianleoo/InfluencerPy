@@ -19,6 +19,8 @@
 
 Never miss important content in your field again.
 
+![InfluencerPy CLI](docs/cli.png)
+
 ## ✨ Features
 
 ### 🔍 Smart Content Discovery

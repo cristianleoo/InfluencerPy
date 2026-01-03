@@ -107,11 +107,13 @@ InfluencerPy offers multiple specialized Scout types, each designed for differen
 
 *   **How it works:** Uses the **InfluencerPy RSS Tool** to subscribe to XML/Atom feeds
 *   **Database Storage:** Feeds stored locally, preventing duplicate content
+*   **Multi-Feed Support:** When multiple feeds are subscribed, the agent explores ALL of them and gathers entries from each source
 *   **Configuration:**
     *   **Feeds:** List of RSS Feed URLs (validated automatically)
-*   **Intelligence:** Agent analyzes feed entries for relevance, not just newest item
+    *   **Tip:** You can add multiple feeds at once by separating them with commas (e.g., `https://feed1.com/rss, https://feed2.com/rss`)
+*   **Intelligence:** Agent analyzes feed entries across all sources for relevance, presenting diverse perspectives
 *   **Example Use Cases:**
-    *   **Scouting**: Weekly digest of TechCrunch articles with summaries
+    *   **Scouting**: Weekly digest combining TechCrunch, Ars Technica, and The Verge with summaries
     *   **Generation**: Daily tweets about blog posts from favorite sources
 
 ### 3. Substack Scout 📰

@@ -93,6 +93,11 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
+  - Examples:
+    - Overview: examples/README.md
+    - Multi-Feed RSS Scout: examples/multi_rss_scout_example.md
+    - Multi-Feed Visual Guide: examples/multi_rss_visual_guide.md
+    - Multi-Feed Technical Details: examples/MULTI_FEED_ENHANCEMENT.md
   - Concepts:
     - Scouts: concepts/scouts.md
     - Tools: concepts/tools.md
