@@ -18,6 +18,7 @@ InfluencerPy is an AI-powered tool that helps you discover, monitor, and curate 
 
 ### 🔍 Scouting Mode (Primary)
 Find and list interesting content with summaries and links. Perfect for:
+
 - Research and staying informed in your field
 - Competitive intelligence
 - Newsletter curation
@@ -25,6 +26,7 @@ Find and list interesting content with summaries and links. Perfect for:
 
 ### ✍️ Generation Mode (Optional)
 Automatically create social media posts from discovered content. Great for:
+
 - Maintaining active social presence
 - Content repurposing
 - Automated Twitter accounts

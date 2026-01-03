@@ -99,9 +99,16 @@ nav:
     - Scheduler: concepts/scheduler.md
     - Image Generation: concepts/image-generation.md
     - Scheduling: concepts/scheduling.md
+    - System Prompts: concepts/system-prompts.md
   - Tools:
     - HTTP Request: tools/http-request.md
+    - HTTP Request (Technical): tools/http-request-technical.md
+  - Platforms:
+    - Substack: platforms/substack.md
   - Channels:
     - Telegram: channels/telegram.md
+  - Experimental:
+    - Browser Tool: experimental/browser-tool.md
+    - Browser Tool (Technical): experimental/browser-tool-technical.md
   - Deployment: deployment.md
   - API Reference: reference.md
