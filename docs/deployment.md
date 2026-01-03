@@ -110,10 +110,10 @@ Oracle offers "Always Free" ARM instances that are very powerful.
 *   **Pros**: Industry standard.
 *   **Cons**: Free trial expires after 1 year.
 
-### 4. Fly.io (Containerized)
-If you prefer Docker, Fly.io offers a free allowance.
-*   **Pros**: Simple deployment if you have a Dockerfile.
-*   **Cons**: Persistent storage (volumes) might cost extra after the free allowance.
+### 4. DigitalOcean (Droplets)
+DigitalOcean provides affordable VPS options.
+*   **Pros**: Simple deployment, good documentation.
+*   **Cons**: No permanent free tier (but very affordable starting at $4/month).
 
 ## Tips for Cloud Deployment
 

@@ -37,7 +37,8 @@ class ScoutModel(SQLModel, table=True):
     name: str = Field(unique=True)
     type: str  # search, subreddit, rss
     config_json: str  # JSON string of params
-    platforms: str = Field(default="[]")  # JSON list of platforms ["x", "linkedin", etc.]
+    intent: str = Field(default="scouting")  # "scouting" or "generation" - determines output format
+    platforms: str = Field(default="[]")  # JSON list of platforms ["x", "linkedin", etc.] - only used for generation
     telegram_review: bool = Field(default=False)  # Enable Telegram approval workflow
     prompt_template: Optional[str] = None
     schedule_cron: Optional[str] = None

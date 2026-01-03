@@ -43,8 +43,26 @@ Keep this command running (e.g., in a background terminal or on a server). The b
 ### 🔔 Review Notifications
 When a Scout generates a draft (and `telegram_review` is enabled), the bot will send you a message with the draft content and inline buttons:
 
-*   **✅ Confirm**: Immediately posts the content to the configured platform (e.g., X/Twitter).
+*   **✅ Confirm**: 
+    - For X/Twitter: Posts the content immediately
+    - For Telegram-only drafts (e.g., Substack content): Marks as confirmed - you can then manually copy/paste the content to your target platform
 *   **❌ Reject**: Discards the draft.
+*   **💬 Feedback/Edit**: Provide feedback to regenerate the draft with your improvements.
+
+### Platform-Specific Workflows
+
+#### X (Twitter) Posts
+When you click **✅ Confirm**, the content is automatically posted to X/Twitter.
+
+#### Telegram-Only Posts (e.g., Substack)
+For platforms that don't support automated posting:
+1. Scout generates a draft and sends it to Telegram
+2. Review the content
+3. Click **✅ Confirm** to acknowledge
+4. Manually copy the content from Telegram
+5. Paste and publish on your target platform (e.g., Substack)
+
+This workflow is useful for platforms like Substack where API posting isn't supported or when you want full manual control.
 
 ### 🕵️ Manage Scouts (`/scouts`)
 You can list and run your configured scouts directly from Telegram.

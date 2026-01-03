@@ -1,6 +1,7 @@
 import os
 import json
 from typing import Optional
+import requests
 from influencerpy.core.interfaces import SocialProvider
 from influencerpy.types.models import Platform, PostDraft
 from influencerpy.platforms.substack.auth import SubstackAuth
@@ -86,17 +87,24 @@ class SubstackProvider(SocialProvider):
         body_html = f"<p>{content.replace(chr(10), '</p><p>')}</p>"
         
         try:
-            url = f"https://{self.subdomain}.substack.com/api/v1/posts"
+            # First, get the user info to populate bylines
+            user_url = f"https://{self.subdomain}.substack.com/api/v1/user"
+            user_response = self.auth.get(user_url, timeout=30)
+            user_response.raise_for_status()
+            user_data = user_response.json()
+            user_id = user_data.get("id")
             
+            # The correct endpoint for creating drafts
+            url = f"https://{self.subdomain}.substack.com/api/v1/drafts"
+            
+            # Construct the payload with draft_bylines
             payload = {
-                "title": title,
+                "draft_title": title,
                 "subtitle": "",
                 "draft_body": body_html,
                 "type": "newsletter",
                 "audience": "everyone",  # or "only_paid" for paid subscribers
-                "post_date": None,  # Draft, not scheduled
-                "draft_byline": None,
-                "draft_section_id": None,
+                "draft_bylines": [{"id": user_id}] if user_id else []
             }
             
             response = self.auth.post(url, json=payload, timeout=30)
@@ -111,5 +119,11 @@ class SubstackProvider(SocialProvider):
             
             return draft_id
             
+        except requests.exceptions.HTTPError as e:
+            # Provide more detailed error information
+            error_msg = f"Failed to create Substack draft: {e}"
+            if hasattr(e.response, 'text'):
+                error_msg += f"\nResponse: {e.response.text}"
+            raise RuntimeError(error_msg)
         except Exception as e:
             raise RuntimeError(f"Failed to create Substack draft: {e}")

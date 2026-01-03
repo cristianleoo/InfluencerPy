@@ -60,34 +60,53 @@ class ScoutManager:
         else:
             raise ValueError(f"Unknown provider: {provider_name}")
 
-    def create_scout(self, name: str, type: str, config: dict, prompt_template: str = None, schedule_cron: str = None, platforms: list = None, telegram_review: bool = False) -> ScoutModel:
-        """Create a new Scout configuration."""
+    def create_scout(self, name: str, type: str, config: dict, intent: str = "scouting", prompt_template: str = None, schedule_cron: str = None, platforms: list = None, telegram_review: bool = False) -> ScoutModel:
+        """Create a new Scout configuration.
+        
+        Args:
+            name: Scout name
+            type: Scout type (rss, reddit, search, etc.)
+            config: Configuration dict specific to scout type
+            intent: "scouting" (find and list content) or "generation" (create social posts)
+            prompt_template: Custom prompt for the scout
+            schedule_cron: Cron schedule string
+            platforms: List of platforms (only used for generation intent)
+            telegram_review: Enable Telegram review workflow (only for generation)
+        """
         scout = ScoutModel(
             name=name,
             type=type,
             config_json=json.dumps(config),
+            intent=intent,
             prompt_template=prompt_template,
             schedule_cron=schedule_cron,
             platforms=json.dumps(platforms or []),
-            telegram_review=telegram_review
+            telegram_review=telegram_review if intent == "generation" else False
         )
         self.session.add(scout)
         self.session.commit()
         self.session.refresh(scout)
         return scout
 
-    def update_scout(self, scout: ScoutModel, name: str = None, config: dict = None, schedule_cron: str = None, prompt_template: str = None, telegram_review: bool = None) -> ScoutModel:
+    def update_scout(self, scout: ScoutModel, name: str = None, config: dict = None, intent: str = None, schedule_cron: str = None, prompt_template: str = None, telegram_review: bool = None, platforms: list = None) -> ScoutModel:
         """Update an existing Scout."""
         if name:
             scout.name = name
         if config:
             scout.config_json = json.dumps(config)
+        if intent:
+            scout.intent = intent
+            # Reset telegram_review if switching to scouting
+            if intent == "scouting":
+                scout.telegram_review = False
         if schedule_cron is not None: # Allow clearing schedule with empty string if needed, but None means no change
             scout.schedule_cron = schedule_cron
         if prompt_template is not None:
             scout.prompt_template = prompt_template
-        if telegram_review is not None:
+        if telegram_review is not None and (not intent or scout.intent == "generation"):
             scout.telegram_review = telegram_review
+        if platforms is not None:
+            scout.platforms = json.dumps(platforms)
             
         self.session.add(scout)
         self.session.commit()
@@ -730,18 +749,68 @@ Respond with ONLY the number of the best option (e.g., "1" or "2" or "3").
         """Generate a draft post using the configured LLM."""
         config = json.loads(scout.config_json)
         gen_config = config.get("generation_config", {})
-        
+
         provider_name = gen_config.get("provider", "gemini")
         model_id = gen_config.get("model_id") # Let factory handle default if None
         temperature = gen_config.get("temperature", 0.7)
-        
+
         # Detect platform from scout config (default to "x" for Twitter)
         platforms = json.loads(scout.platforms) if scout.platforms else []
         platform = platforms[0] if platforms else "x"
-        
+
         # Build structured system prompt for post generation
         user_instructions = scout.prompt_template or "Summarize this content and highlight key takeaways for a social media audience."
+
+        system_prompt = SystemPrompt(
+            general_instructions=GENERAL_GUARDRAILS,
+            tool_instructions="",  # No tools needed for generation
+            platform_instructions=get_platform_instructions(platform),
+            user_instructions=user_instructions
+        )
+
+    def format_scouting_output(self, scout: ScoutModel, items: List[ContentItem]) -> str:
+        """Format content items as a curated list (for scouting intent).
         
+        Args:
+            scout: The scout that found the content
+            items: List of content items to format
+            
+        Returns:
+            Formatted markdown text with titles, summaries, and links
+        """
+        output = []
+        output.append(f"# 📚 {scout.name} - Content Discovery\n")
+        output.append(f"*Found {len(items)} interesting item{'s' if len(items) != 1 else ''}*\n")
+        
+        for i, item in enumerate(items, 1):
+            output.append(f"\n## {i}. {item.title}")
+            output.append(f"\n{item.summary}\n")
+            output.append(f"🔗 **Source:** {item.url}")
+            
+            # Add additional sources if available
+            if item.sources and len(item.sources) > 0:
+                output.append(f"\n📎 **Related:** {', '.join(item.sources[:3])}")
+            
+            output.append("\n" + "-" * 50)
+        
+        return "\n".join(output)
+    
+    def generate_draft(self, scout: ScoutModel, item: ContentItem) -> str:
+        """Generate a draft post using the configured LLM (for generation intent)."""
+        config = json.loads(scout.config_json)
+        gen_config = config.get("generation_config", {})
+
+        provider_name = gen_config.get("provider", "gemini")
+        model_id = gen_config.get("model_id") # Let factory handle default if None
+        temperature = gen_config.get("temperature", 0.7)
+
+        # Detect platform from scout config (default to "x" for Twitter)
+        platforms = json.loads(scout.platforms) if scout.platforms else []
+        platform = platforms[0] if platforms else "x"
+
+        # Build structured system prompt for post generation
+        user_instructions = scout.prompt_template or "Summarize this content and highlight key takeaways for a social media audience."
+
         system_prompt = SystemPrompt(
             general_instructions=GENERAL_GUARDRAILS,
             tool_instructions="",  # No tools needed for generation

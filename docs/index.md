@@ -1,17 +1,33 @@
 # Welcome to InfluencerPy
 
-**Premium Social Media Automation CLI.**
+**Intelligent Content Discovery & Curation, Powered by AI**
 
-InfluencerPy is an intelligent CLI agent that helps you discover, curate, and publish content to social media.
+InfluencerPy is an AI-powered tool that helps you discover, monitor, and curate the best content from across the web. Using intelligent scouts, it continuously finds relevant content, summarizes key insights, and optionally generates social media posts.
 
 ## Key Features
 
-- **🕵️ Multi-Platform Support**: Designed for X (Twitter), with auto-threading for long posts.
-- **📡 Scout System**: Create intelligent "Scouts" (RSS, Reddit, Search) to monitor topics and draft content.
-- **🤖 AI-Powered Drafting**: Uses Gemini (via Strands) or Anthropic to generate high-quality post drafts.
-- **🎛️ Interactive CLI**: Rich terminal interface with wizards for configuration and scheduling.
-- **📅 Smart Scheduling**: Built-in cron schedule builder for automated runs.
-- **🧠 Self-Improving**: Learns from your feedback to optimize content selection and drafting.
+- **🔍 Smart Content Discovery**: Create AI scouts that monitor RSS, Reddit, Substack, Arxiv, and more
+- **📋 Curated Reports**: Get organized lists with summaries and links to original sources
+- **🤖 AI-Powered**: Uses Gemini or Anthropic for intelligent content selection and summarization
+- **✍️ Optional Post Generation**: Turn discovered content into social media posts for X (Twitter)
+- **📱 Telegram Delivery**: Receive scout reports and review drafts from your phone
+- **📅 Smart Scheduling**: Set scouts to run automatically (daily, weekly, custom)
+- **🧠 Self-Improving**: Learns from your feedback to optimize content selection
+
+## Two Modes of Operation
+
+### 🔍 Scouting Mode (Primary)
+Find and list interesting content with summaries and links. Perfect for:
+- Research and staying informed in your field
+- Competitive intelligence
+- Newsletter curation
+- Content discovery for teams
+
+### ✍️ Generation Mode (Optional)
+Automatically create social media posts from discovered content. Great for:
+- Maintaining active social presence
+- Content repurposing
+- Automated Twitter accounts
 
 ## Quick Start
 
@@ -24,7 +40,7 @@ influencerpy
 
 ## Documentation
 
-*   [Getting Started](getting-started.md): Installation and initial setup.
-*   [Scouts](concepts/scouts.md): Learn about different scout types (Search, RSS, Reddit, Arxiv).
-*   [Telegram Integration](channels/telegram.md): Setup and use the Telegram bot for remote control.
-*   [Scheduling](concepts/scheduling.md): Automate your content pipeline.
+*   [Getting Started](getting-started.md): Installation and initial setup
+*   [Understanding Scouts](concepts/scouts.md): Learn about scouting vs generation intents
+*   [Telegram Integration](channels/telegram.md): Setup Telegram for scout reports
+*   [Scheduling](concepts/scheduling.md): Automate your content pipeline

@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/badge/license-MIT-green?style=for-the-badge)](LICENSE)
 [![Code Style](https://img.shields.io/badge/code%20style-black-000000?style=for-the-badge)](https://github.com/psf/black)
 
-**The Premium Social Media Automation Agent.**
+**Intelligent Content Discovery & Curation, Powered by AI**
 
 [Features](#-features) • [Installation](#-installation) • [Usage](#-usage) • [Documentation](#-documentation)
 
@@ -15,40 +15,45 @@
 
 ---
 
----
+**InfluencerPy** is an AI-powered content discovery tool that helps you find, monitor, and curate the best content from across the web. Using intelligent **AI Scouts**, it continuously discovers relevant content, summarizes key insights, and optionally generates social media posts.
 
-
-
----
-
-**InfluencerPy** is an intelligent CLI agent that autonomously discovers, curates, and publishes content to social media. Unlike basic scheduling tools, it uses **AI Scouts** to research topics, learn from your feedback, and draft high-quality posts that sound like you.
+Never miss important content in your field again.
 
 ## ✨ Features
 
-### 🕵️ Autonomous Scouts
+### 🔍 Smart Content Discovery
 
-Create configurable agents that patrol the web for you:
+Create AI scouts that continuously monitor sources and find relevant content:
 
-- **RSS Scouts**: Monitor your favorite blogs and newsletters.
-- **Reddit Scouts**: Surface viral discussions from specific subreddits.
-- **Substack Scouts**: 🆕 Follow and monitor Substack newsletters for new posts.
-- **Search Scouts**: Discover trending news via Google Search.
-- **Arxiv Scouts**: Monitor new research papers on Arxiv.
-- **HTTP Request Tool**: 🆕 Fetch and parse any web page with Beautiful Soup, including CSS selector support.
-- **Browser Scouts** ⚠️ *[Experimental]*: Navigate web pages and extract content dynamically.
-- **Telegram Integration**: Review and approve posts via a Telegram bot before they are published.
+- **RSS Scouts**: Monitor blogs, newsletters, and news feeds
+- **Reddit Scouts**: Track trending discussions and viral posts
+- **Substack Scouts**: Follow newsletter publications
+- **Search Scouts**: Discover trending topics via Google
+- **Arxiv Scouts**: Stay updated on research papers
+- **HTTP Tool**: Extract content from any webpage
+- **Browser Scouts** ⚠️ *[Experimental]*: Navigate dynamic web pages
 
-### 🧠 AI-Powered Core
+### 🧠 Two Modes of Operation
 
-- **Smart Selection**: Uses a two-step AI process to pick only the *best* content, not just the newest.
-- **Contextual Drafting**: Generates posts using Gemini or Anthropic, tailored to your specific tone and style.
-- **Self-Improving**: The "Calibration" feature rewrites its own system prompts based on your feedback.
+**🔍 Scouting Mode (Primary)**: Find and list interesting content
+- Curated lists with summaries
+- Links to original sources
+- Delivered via Telegram
+- Perfect for research, competitive intelligence, and staying informed
+
+**✍️ Generation Mode (Optional)**: Create social media posts
+- Automatically generate posts from discovered content
+- Post directly to X (Twitter)
+- Review and edit before publishing
+- Maintain your authentic voice
 
 ### 💎 Premium Experience
 
-- **Beautiful CLI**: A rich, interactive terminal interface with dashboards, wizards, and progress bars.
-- **Multi-Platform**: First-class support for **X (Twitter)** and **Substack** 🆕, including auto-threading for long posts.
-- **Smart Scheduling**: Interactive schedule builder (Daily, Weekly, Interval) – no cron syntax required.
+- **Beautiful CLI**: Rich, interactive terminal interface with dashboards and wizards
+- **AI-Powered**: Uses Gemini or Anthropic for smart content selection and generation
+- **Self-Improving**: Calibration feature learns from your feedback
+- **Smart Scheduling**: Set it and forget it - scouts run automatically
+- **Telegram Integration**: Review discoveries and approve posts from your phone
 
 ---
 
@@ -106,61 +111,26 @@ cd influencerpy
 pip install -e .
 ```
 
-### 🐳 Option 5: Docker
-
-You can also run InfluencerPy using Docker. This is recommended for long-running bots.
-
-1. **Clone the repository:**
-
-   ```bash
-   git clone https://github.com/cristianleoo/influencerpy.git
-   cd influencerpy
-   ```
-
-2. **Build the image:**
-
-   ```bash
-   docker build -t influencerpy .
-   ```
-
-3. **Run interactively (for configuration):**
-
-   We simply mount the `.influencerpy` directory to persist configuration.
-
-   ```bash
-   docker run -it --rm \
-     -v $(pwd)/.influencerpy:/app/.influencerpy \
-     influencerpy
-   ```
-
-4. **Run the bot (detached):**
-
-   ```bash
-   docker run -d \
-     --name influencerpy-bot \
-     --restart unless-stopped \
-     -v $(pwd)/.influencerpy:/app/.influencerpy \
-     influencerpy bot
-   ```
-
 ---
 
-### Telegram Setup
+## ⚙️ Setup
+
+### Telegram Setup (Required)
+
+Scouts deliver discoveries via Telegram:
 
 1. Message `@BotFather` on Telegram to create a new bot and get the **Bot Token**.
 2. Message `@userinfobot` to get your **Chat ID**.
 3. Run `influencerpy configure` and enter these credentials.
-4. Run `influencerpy bot` to start the notification service.
+4. Run `influencerpy bot` to start receiving scout reports.
 
 ### Substack Setup (Optional)
 
-To post to Substack or monitor paywalled newsletters:
+To monitor paywalled Substack newsletters:
 
-1. See the detailed [Substack Setup Guide](SUBSTACK_SETUP.md)
+1. See the detailed [Substack Platform Guide](docs/platforms/substack.md)
 2. Run `influencerpy configure` and select "Substack"
 3. Enter your cookies and subdomain when prompted
-
-**Note**: Substack posts are created as drafts for manual review and publishing.
 
 ## 🎮 Usage
 
@@ -174,15 +144,23 @@ influencerpy
 
 On your first launch, the **Setup Wizard** will guide you through:
 
-1. **Credentials**: securely saving your API Keys (X/Twitter, Gemini/Anthropic).
-2. **AI Configuration**: Selecting your preferred model and temperature.
+1. **Credentials**: Securely save your API Keys (Gemini/Anthropic for AI, X/Twitter if posting)
+2. **AI Configuration**: Select your preferred model and temperature
 
-### Workflow
+### Quick Start: Content Scouting
 
-1. **Create a Scout**: Tell it what to look for (e.g., "AI News" via RSS).
-2. **Run Scout**: Let it find content and draft a post.
-3. **Review**: Accept, Edit, or Reject the draft.
-4. **Post**: Publish immediately or schedule for later.
+1. **Create a Scout**: Choose sources to monitor (e.g., RSS feeds, Reddit, Arxiv)
+2. **Select "Scouting" Intent**: Get curated lists with links
+3. **Set Schedule**: Daily, weekly, or custom timing
+4. **Run**: Scouts find content and send reports to Telegram
+5. **Review**: Get organized lists of relevant content with summaries
+
+### Optional: Social Media Generation
+
+1. **Create a Scout**: Same as above
+2. **Select "Generation" Intent**: Create social posts
+3. **Choose Platform**: X (Twitter) or manual copy/paste
+4. **Review in Telegram**: Edit and approve before posting
 
 ---
 
@@ -192,6 +170,7 @@ Full documentation is available at **[https://cristianleoo.github.io/InfluencerP
 
 - [Getting Started Guide](docs/getting-started.md)
 - [Understanding Scouts](docs/concepts/scouts.md)
+- [Scouting vs Generation Intents](docs/concepts/scouts.md#scout-intents)
 - [Scheduling Concepts](docs/concepts/scheduling.md)
 
 ---

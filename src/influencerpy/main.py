@@ -808,6 +808,27 @@ def _setup_credentials():
             break
 
 
+def _settings_menu():
+    """Settings menu that groups credentials and AI configuration."""
+    print_header()
+    while True:
+        choice = questionary.select(
+            "Settings:",
+            choices=[
+                questionary.Choice("🔑 Credentials (API Keys, Tokens)", value="Credentials"),
+                questionary.Choice("⚙️ AI Configuration (Models, Temperature)", value="AI Config"),
+                questionary.Choice("🔙 Back to Main Menu", value="Back"),
+            ],
+        ).unsafe_ask()
+
+        if choice == "Credentials":
+            _setup_credentials()
+        elif choice == "AI Config":
+            _setup_config_wizard()
+        elif choice == "Back":
+            break
+
+
 def _build_custom_schedule() -> str:
     """Interactive wizard to build a cron string with multi-select options."""
     freq = questionary.select(
@@ -1059,6 +1080,30 @@ def _create_scout_flow(manager):
             )
         config["image_generation"] = True
 
+    # INTENT SELECTION - Ask this FIRST before scheduling/platforms
+    intent = questionary.select(
+        "What is the goal of this scout?",
+        choices=[
+            questionary.Choice(
+                "🔍 Content Discovery - Find and list interesting content with links",
+                value="scouting"
+            ),
+            questionary.Choice(
+                "✍️ Content Generation - Create social media posts from content",
+                value="generation"
+            ),
+        ],
+    ).unsafe_ask()
+    
+    console.print(
+        Panel(
+            f"[bold]Intent: {intent.title()}[/bold]\n" +
+            ("Scouts will find and list content for you to review" if intent == "scouting" 
+             else "Scouts will generate social posts from discovered content"),
+            border_style="blue"
+        )
+    )
+
     # Scheduling
     schedule_choice = questionary.select(
         "Schedule:",
@@ -1092,18 +1137,23 @@ def _create_scout_flow(manager):
     elif schedule_choice == "interactive":
         schedule_cron = _build_custom_schedule()
 
-    # Tone & Style
-    tone = questionary.select(
-        "Content Tone:",
-        choices=["Professional", "Casual", "Witty", "Urgent", "Inspirational"],
-    ).unsafe_ask()
+    # For scouting intent, tone/style are less critical but still useful
+    if intent == "generation":
+        # Tone & Style
+        tone = questionary.select(
+            "Content Tone:",
+            choices=["Professional", "Casual", "Witty", "Urgent", "Inspirational"],
+        ).unsafe_ask()
 
-    style = questionary.select(
-        "Content Style:",
-        choices=["Concise", "Detailed", "Storytelling", "Bullet Points"],
-    ).unsafe_ask()
+        style = questionary.select(
+            "Content Style:",
+            choices=["Concise", "Detailed", "Storytelling", "Bullet Points"],
+        ).unsafe_ask()
 
-    prompt_template = f"Summarize this content and highlight key takeaways for a social media audience. Tone: {tone}. Style: {style}."
+        prompt_template = f"Summarize this content and highlight key takeaways for a social media audience. Tone: {tone}. Style: {style}."
+    else:
+        # For scouting, use a simple summary prompt
+        prompt_template = "Provide a clear summary of each content item found, highlighting why it's interesting and relevant."
 
     # Advanced Configuration
     if questionary.confirm(
@@ -1143,28 +1193,38 @@ def _create_scout_flow(manager):
         #             "[yellow]Langfuse tracing disabled for this scout.[/yellow]"
         #         )
     
-    # Platform Selection
-    telegram_review = questionary.confirm(
-        "Enable review on Telegram before posting?", default=False
-    ).unsafe_ask()
+    # Platform Selection - ONLY for generation intent
+    if intent == "generation":
+        telegram_review = questionary.confirm(
+            "Enable review on Telegram before posting?", default=False
+        ).unsafe_ask()
 
-    # Multi-platform selection (checkbox)
-    platform_choices = questionary.checkbox(
-        "Select platforms to post to:",
-        choices=["X (Twitter)", "Substack"],
-    ).unsafe_ask()
+        # Multi-platform selection (checkbox)
+        platform_choices = questionary.checkbox(
+            "Select platforms to post to:",
+            choices=["X (Twitter)", "Telegram (copy/paste manually)"],
+        ).unsafe_ask()
 
-    # Map display names to internal platform IDs
-    platforms = []
-    if "X (Twitter)" in platform_choices:
-        platforms.append("x")
-    if "Substack" in platform_choices:
-        platforms.append("substack")
+        # Map display names to internal platform IDs
+        platforms = []
+        if "X (Twitter)" in platform_choices:
+            platforms.append("x")
+        if "Telegram (copy/paste manually)" in platform_choices:
+            platforms.append("telegram")
+
+        if not platforms:
+            console.print("[yellow]No platforms selected. Defaulting to Telegram.[/yellow]")
+            platforms = ["telegram"]
+    else:
+        # For scouting intent, always telegram and no review toggle needed
+        telegram_review = False
+        platforms = ["telegram"]
 
     manager.create_scout(
         name,
         type_choice,
         config,
+        intent=intent,
         prompt_template=prompt_template,
         schedule_cron=schedule_cron,
         platforms=platforms,
@@ -2623,10 +2683,7 @@ def main(ctx: typer.Context):
                             "📊 Launch Dashboard", value="Launch Dashboard"
                         ),
                         questionary.Choice(
-                            "⚙️ Configure AI Settings", value="Configure AI Settings"
-                        ),
-                        questionary.Choice(
-                            "🔑 Configure Credentials", value="Configure Credentials"
+                            "⚙️ Settings", value="Settings"
                         ),
                         questionary.Choice("🚪 Exit", value="Exit"),
                     ]
@@ -2651,10 +2708,8 @@ def main(ctx: typer.Context):
                     scouts()
                 elif choice == "Launch Dashboard":
                     dashboard()
-                elif choice == "Configure AI Settings":
-                    _setup_config_wizard()
-                elif choice == "Configure Credentials":
-                    _setup_credentials()
+                elif choice == "Settings":
+                    _settings_menu()
                 elif choice == "Exit":
                     console.print("[yellow]Goodbye![/yellow]")
                     logger.info("Application shutdown")

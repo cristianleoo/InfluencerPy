@@ -387,7 +387,17 @@ class TelegramChannel(BaseChannel):
                 return
 
             if action == "confirm":
-                if post.platform == "x":
+                if post.platform == "telegram":
+                    # Telegram-only posts are just acknowledged (for manual copy/paste elsewhere)
+                    post.status = "posted"
+                    post.posted_at = datetime.utcnow()
+                    session.add(post)
+                    session.commit()
+                    await query.edit_message_text(
+                        "✅ Draft confirmed!\n\n"
+                        "📋 You can now copy and manually post this content to your target platform."
+                    )
+                elif post.platform == "x":
                     provider = XProvider()
                     if provider.authenticate():
                         try:
@@ -523,16 +533,23 @@ class TelegramChannel(BaseChannel):
                     
                     items = manager.run_scout(local_scout)
                     if not items:
-                        return None
+                        return None, local_scout.intent
                     
-                    item = manager.select_best_content(items, local_scout)
-                    if not item:
-                        return None
-                        
-                    draft_content = manager.generate_draft(local_scout, item)
-                    return draft_content
+                    # Handle based on intent
+                    if local_scout.intent == "scouting":
+                        # Format as curated list
+                        formatted_output = manager.format_scouting_output(local_scout, items)
+                        return formatted_output, "scouting"
+                    else:
+                        # Generate social post
+                        item = manager.select_best_content(items, local_scout)
+                        if not item:
+                            return None, "generation"
+                        draft_content = manager.generate_draft(local_scout, item)
+                        return draft_content, "generation"
 
-                draft_content = await asyncio.to_thread(run_logic)
+                result = await asyncio.to_thread(run_logic)
+                draft_content, intent = result if result else (None, "generation")
                 
                 if not draft_content:
                     await self._send_message_split(
@@ -545,7 +562,12 @@ class TelegramChannel(BaseChannel):
                 with next(get_session()) as session:
                     # Check platforms
                     platforms = json.loads(scout.platforms) if scout.platforms else []
-                    primary_platform = platforms[0] if platforms else "x"
+                    
+                    # For scouting intent, always use telegram
+                    if intent == "scouting":
+                        primary_platform = "telegram"
+                    else:
+                        primary_platform = platforms[0] if platforms else "x"
                     
                     db_post = PostModel(
                         content=draft_content,
@@ -557,9 +579,10 @@ class TelegramChannel(BaseChannel):
                     session.add(db_post)
                     session.commit()
                     
+                message_type = "report" if intent == "scouting" else "draft"
                 await self._send_message_split(
                     chat_id=self.chat_id,
-                    text=f"✅ Scout '{scout.name}' finished! Draft created."
+                    text=f"✅ Scout '{scout.name}' finished! {message_type.capitalize()} created."
                 )
                 
                 # Trigger check immediately to show the review card

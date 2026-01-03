@@ -61,19 +61,40 @@ class ScoutScheduler:
 
         logger.info(f"Executing scheduled run for scout: {scout.name}")
         
-        # Run in thread pool to avoid blocking async loop if run_scout is sync
-        # But wait, run_scout calls Agent which might be sync or async. 
-        # Strands Agent is sync. So we should run it in a thread.
         try:
             items = await asyncio.to_thread(self.manager.run_scout, scout)
             
-            # If Telegram review is enabled, we don't post automatically here.
-            # The ScoutManager/Telegram integration logic handles the "Drafting" part?
-            # Wait, run_scout only fetches items. It doesn't draft or post.
-            # We need to generate drafts for the found items.
+            if not items:
+                logger.info(f"Scout {scout.name} found no items")
+                return
             
-            if items:
-                # Select best item
+            # Handle based on intent
+            if scout.intent == "scouting":
+                # Format as curated list
+                formatted_output = await asyncio.to_thread(
+                    self.manager.format_scouting_output, scout, items
+                )
+                
+                # Save to DB for Telegram delivery
+                from influencerpy.database import get_session
+                from influencerpy.types.schema import PostModel
+                from datetime import datetime
+                
+                with next(get_session()) as session:
+                    db_post = PostModel(
+                        content=formatted_output,
+                        platform="telegram",  # Always telegram for scouting
+                        status="pending_review",
+                        created_at=datetime.utcnow(),
+                        scout_id=scout.id
+                    )
+                    session.add(db_post)
+                    session.commit()
+                
+                logger.info(f"Generated scouting report for {scout.name} with {len(items)} items")
+                
+            else:  # intent == "generation"
+                # Select best item and generate social post
                 best_item = await asyncio.to_thread(self.manager.select_best_content, items, scout)
                 if best_item:
                     # Generate draft
