@@ -31,8 +31,10 @@ Create configurable agents that patrol the web for you:
 
 - **RSS Scouts**: Monitor your favorite blogs and newsletters.
 - **Reddit Scouts**: Surface viral discussions from specific subreddits.
+- **Substack Scouts**: 🆕 Follow and monitor Substack newsletters for new posts.
 - **Search Scouts**: Discover trending news via Google Search.
 - **Arxiv Scouts**: Monitor new research papers on Arxiv.
+- **HTTP Request Tool**: 🆕 Fetch and parse any web page with Beautiful Soup, including CSS selector support.
 - **Browser Scouts** ⚠️ *[Experimental]*: Navigate web pages and extract content dynamically.
 - **Telegram Integration**: Review and approve posts via a Telegram bot before they are published.
 
@@ -45,7 +47,7 @@ Create configurable agents that patrol the web for you:
 ### 💎 Premium Experience
 
 - **Beautiful CLI**: A rich, interactive terminal interface with dashboards, wizards, and progress bars.
-- **Multi-Platform**: First-class support for **X (Twitter)**, including auto-threading for long posts.
+- **Multi-Platform**: First-class support for **X (Twitter)** and **Substack** 🆕, including auto-threading for long posts.
 - **Smart Scheduling**: Interactive schedule builder (Daily, Weekly, Interval) – no cron syntax required.
 
 ---
@@ -149,6 +151,16 @@ You can also run InfluencerPy using Docker. This is recommended for long-running
 2. Message `@userinfobot` to get your **Chat ID**.
 3. Run `influencerpy configure` and enter these credentials.
 4. Run `influencerpy bot` to start the notification service.
+
+### Substack Setup (Optional)
+
+To post to Substack or monitor paywalled newsletters:
+
+1. See the detailed [Substack Setup Guide](SUBSTACK_SETUP.md)
+2. Run `influencerpy configure` and select "Substack"
+3. Enter your cookies and subdomain when prompted
+
+**Note**: Substack posts are created as drafts for manual review and publishing.
 
 ## 🎮 Usage
 

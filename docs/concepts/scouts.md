@@ -25,7 +25,7 @@ Every time a Scout runs, it follows a sophisticated 5-step process:
 
 ## Scout Types
 
-InfluencerPy offers four specialized Scout types, each designed for a different kind of content discovery.
+InfluencerPy offers multiple specialized Scout types, each designed for a different kind of content discovery.
 
 ### 1. Search Scout 🔍
 
@@ -51,7 +51,21 @@ InfluencerPy offers four specialized Scout types, each designed for a different 
     *   *TechCrunch:* `https://techcrunch.com/feed/`
     *   *The Verge:* `https://www.theverge.com/rss/index.xml`
 
-### 3. Reddit Scout 👾
+### 3. Substack Scout 📰
+
+**Best for:** Monitoring Substack newsletters and accessing paywalled content from your subscriptions.
+
+*   **How it works:** Uses the **Substack API** to fetch posts from newsletters.
+*   **Configuration:**
+    *   **Newsletter URL**: The URL of the Substack newsletter to monitor (e.g., `https://newsletter.substack.com`)
+    *   **Sorting**: Choose between "new" (most recent) or "top" (most popular) posts
+*   **Authentication:** Optionally configure Substack cookies to access paywalled content from newsletters you subscribe to.
+*   **Example Use Case:**
+    *   *Newsletter:* `https://stratechery.com`
+    *   *Result:* The Scout monitors Ben Thompson's newsletter, summarizes new posts, and drafts social media posts about tech industry analysis.
+*   **Setup:** See the [Substack Setup Guide](../../SUBSTACK_SETUP.md) for detailed authentication instructions.
+
+### 4. Reddit Scout 👾
 
 **Best for:** Tapping into community discussions, viral trends, and niche opinions.
 
@@ -63,7 +77,7 @@ InfluencerPy offers four specialized Scout types, each designed for a different 
     *   *Result:* The Scout finds a highly upvoted post about a new open-source model release, captures the community sentiment, and drafts a post sharing the news.
 *   **Note:** This tool respects Reddit's rate limits.
 
-### 4. HTTP Request Scout 🌐
+### 5. HTTP Request Scout 🌐
 
 **Best for:** Monitoring a specific webpage for changes or analyzing a specific static resource.
 
@@ -72,7 +86,7 @@ InfluencerPy offers four specialized Scout types, each designed for a different 
     *   **URL**: The target website address.
 *   **Use Case:** Summarizing a specific company's press release page or a daily updated status report.
 
-### 5. Arxiv Scout 🎓
+### 6. Arxiv Scout 🎓
 
 **Best for:** Finding academic papers and technical research.
 
@@ -85,7 +99,7 @@ InfluencerPy offers four specialized Scout types, each designed for a different 
     *   *Filter:* "This Week"
     *   *Result:* The Scout finds the most relevant paper published in the last 7 days, ensuring freshness.
 
-### 6. Meta-Scout (Orchestrator) 🤖
+### 7. Meta-Scout (Orchestrator) 🤖
 
 **Best for:** Complex research tasks that require combining data from multiple sources.
 

@@ -1,4 +1,5 @@
 import json
+import os
 import logging
 from datetime import datetime
 from typing import Dict, List, Optional, Union
@@ -104,12 +105,15 @@ class RSSManager:
         update_interval: int = DEFAULT_UPDATE_INTERVAL,
         auth: Dict = None,
         headers: Dict = None,
+        scout_id: Optional[int] = None,
     ) -> Dict:
         with next(get_session()) as session:
-            # Check if already exists
-            existing = session.exec(
-                select(RSSFeedModel).where(RSSFeedModel.url == url)
-            ).first()
+            # Check if already exists for this scout
+            query = select(RSSFeedModel).where(RSSFeedModel.url == url)
+            if scout_id is not None:
+                query = query.where(RSSFeedModel.scout_id == scout_id)
+            existing = session.exec(query).first()
+            
             if existing:
                 return {
                     "status": "error",
@@ -139,6 +143,7 @@ class RSSManager:
             new_feed = RSSFeedModel(
                 url=url,
                 title=title,
+                scout_id=scout_id,  # Link to scout
                 update_interval=update_interval,
                 auth_json=json.dumps(auth) if auth else None,
                 headers_json=json.dumps(headers) if headers else None,
@@ -151,9 +156,10 @@ class RSSManager:
             # Initial update
             self.update_feed(new_feed.id)
 
+            scout_info = f" for scout {scout_id}" if scout_id else ""
             return {
                 "status": "success",
-                "content": [{"text": f"Subscribed to: {title} with ID: {new_feed.id}"}],
+                "content": [{"text": f"Subscribed to: {title} with ID: {new_feed.id}{scout_info}"}],
             }
 
     def unsubscribe(self, feed_id: int) -> Dict:
@@ -180,9 +186,14 @@ class RSSManager:
                 "content": [{"text": f"Unsubscribed from: {feed.title}"}],
             }
 
-    def list_feeds(self) -> List[Dict]:
+    def list_feeds(self, scout_id: Optional[int] = None) -> List[Dict]:
+        """List RSS feeds, optionally filtered by scout_id."""
         with next(get_session()) as session:
-            feeds = session.exec(select(RSSFeedModel)).all()
+            query = select(RSSFeedModel)
+            if scout_id is not None:
+                # Only show feeds for this specific scout
+                query = query.where(RSSFeedModel.scout_id == scout_id)
+            feeds = session.exec(query).all()
             return [
                 {
                     "feed_id": str(f.id),
@@ -411,7 +422,7 @@ def rss(
     - fetch: Get feed content from URL without subscribing
     - subscribe: Add a feed to your subscription list
     - unsubscribe: Remove a feed subscription
-    - list: List all subscribed feeds
+    - list: List all subscribed feeds (filtered by scout context if available)
     - read: Read entries from a subscribed feed
     - update: Update feeds with new content
     - search: Find entries matching a query
@@ -426,6 +437,11 @@ def rss(
         query: Search query
         category: Filter entries by category
     """
+    
+    # Get scout_id from environment variable (set by ScoutManager)
+    scout_id_str = os.environ.get("INFLUENCERPY_SCOUT_ID")
+    scout_id = int(scout_id_str) if scout_id_str else None
+    
     try:
         if action == "fetch":
             if not url:
@@ -463,7 +479,7 @@ def rss(
                 }
 
             return rss_manager.subscribe(
-                url, update_interval or DEFAULT_UPDATE_INTERVAL, auth, headers
+                url, update_interval or DEFAULT_UPDATE_INTERVAL, auth, headers, scout_id
             )
 
         elif action == "unsubscribe":
@@ -472,7 +488,7 @@ def rss(
             return rss_manager.unsubscribe(int(feed_id))
 
         elif action == "list":
-            return rss_manager.list_feeds()
+            return rss_manager.list_feeds(scout_id)
 
         elif action == "read":
             if not feed_id:

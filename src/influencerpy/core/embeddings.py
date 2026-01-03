@@ -111,7 +111,7 @@ class EmbeddingManager:
         """Generate embedding for text."""
         return self.model.encode(text, convert_to_tensor=False).tolist()
         
-    def is_similar(self, text: str, threshold: float = 0.85) -> bool:
+    def is_similar(self, text: str, threshold: float = 0.95) -> bool:
         """
         Check if text is similar to any existing content.
         Returns True if similarity > threshold.

@@ -1,6 +1,11 @@
 import base64
 import os
+import logging
 from typing import Optional
+
+# Suppress OpenTelemetry warnings
+logging.getLogger("opentelemetry.trace").setLevel(logging.ERROR)
+logging.getLogger("opentelemetry.sdk.trace").setLevel(logging.ERROR)
 
 def setup_langfuse() -> bool:
     """

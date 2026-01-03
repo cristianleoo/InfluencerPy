@@ -5,6 +5,7 @@ from enum import Enum
 
 class Platform(str, Enum):
     X = "x"
+    SUBSTACK = "substack"
     # TELEGRAM = "telegram"
 
 class ContentType(str, Enum):

@@ -95,9 +95,12 @@ nav:
   - Getting Started: getting-started.md
   - Concepts:
     - Scouts: concepts/scouts.md
+    - Tools: concepts/tools.md
     - Scheduler: concepts/scheduler.md
     - Image Generation: concepts/image-generation.md
     - Scheduling: concepts/scheduling.md
+  - Tools:
+    - HTTP Request: tools/http-request.md
   - Channels:
     - Telegram: channels/telegram.md
   - Deployment: deployment.md

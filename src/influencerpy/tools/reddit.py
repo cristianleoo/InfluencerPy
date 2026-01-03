@@ -4,18 +4,23 @@ from typing import List, Dict, Union
 from datetime import datetime
 
 @tool
-def reddit(subreddit: str, limit: int = 10, sort: str = "hot") -> Union[List[Dict], Dict]:
+def reddit(subreddit: str, limit: int = 20, sort: str = "hot") -> Union[List[Dict], Dict]:
     """
     Fetch latest posts from a subreddit.
     
     Args:
         subreddit: The name of the subreddit (e.g., "arcteryx", "ArtificialInteligence").
         limit: Number of posts to fetch (default: 10).
-        sort: Sort method ("hot", "new", "top"). Default is "hot".
+        sort: Sort method ("hot", "new", "top", "rising"). Default is "hot".
         
     Returns:
         A list of dictionaries containing post details (title, url, content, score, comments).
     """
+    if limit < 20:
+        limit = 20
+    elif limit > 100:
+        limit = 100
+        
     # Ensure subreddit name is clean
     subreddit = subreddit.strip()
     if subreddit.startswith("r/"):

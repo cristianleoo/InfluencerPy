@@ -1,6 +1,7 @@
 import os
 import asyncio
 import logging
+import re
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
@@ -9,6 +10,7 @@ from influencerpy.database import get_session
 from influencerpy.types.schema import PostModel, ScoutModel, ScoutFeedbackModel
 import json
 from influencerpy.platforms.x_platform import XProvider
+from influencerpy.platforms.substack_platform import SubstackProvider
 from influencerpy.channels.base import BaseChannel
 from influencerpy.core.scouts import ScoutManager
 from influencerpy.types.models import Platform, PostDraft
@@ -16,12 +18,154 @@ from influencerpy.types.models import Platform, PostDraft
 logger = logging.getLogger(__name__)
 
 class TelegramChannel(BaseChannel):
+    MAX_MESSAGE_LENGTH = 4096
+    
     def __init__(self):
         self.token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
         self.application = None
         self.scout_manager = ScoutManager()
         self.waiting_for_feedback = {} # {user_id: post_id}
+    
+    @staticmethod
+    def _escape_markdown(text: str) -> str:
+        """
+        Escape special characters for Telegram MarkdownV2.
+        
+        Args:
+            text: The text to escape
+            
+        Returns:
+            Escaped text safe for MarkdownV2
+        """
+        # Characters that need to be escaped in MarkdownV2
+        escape_chars = r'_*[]()~`>#+-=|{}.!'
+        return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
+    
+    def _split_message(self, text: str, max_length: int = None) -> list[str]:
+        """Split a message into chunks that fit within Telegram's character limit.
+        
+        Args:
+            text: The text to split
+            max_length: Maximum length per chunk (defaults to MAX_MESSAGE_LENGTH)
+        
+        Returns:
+            List of message chunks
+        """
+        if max_length is None:
+            max_length = self.MAX_MESSAGE_LENGTH
+        
+        # If message fits, return as-is
+        if len(text) <= max_length:
+            return [text]
+        
+        chunks = []
+        current_chunk = ""
+        
+        # Split by lines to preserve formatting
+        lines = text.split('\n')
+        
+        for line in lines:
+            # If a single line is longer than max_length, we need to split it
+            if len(line) > max_length:
+                # First, add the current chunk if it exists
+                if current_chunk:
+                    chunks.append(current_chunk.rstrip())
+                    current_chunk = ""
+                
+                # Split the long line into smaller pieces
+                while len(line) > max_length:
+                    chunks.append(line[:max_length])
+                    line = line[max_length:]
+                
+                # Add remaining part of the line
+                if line:
+                    current_chunk = line + '\n'
+            else:
+                # Check if adding this line would exceed the limit
+                if len(current_chunk) + len(line) + 1 > max_length:
+                    # Save current chunk and start a new one
+                    chunks.append(current_chunk.rstrip())
+                    current_chunk = line + '\n'
+                else:
+                    # Add line to current chunk
+                    current_chunk += line + '\n'
+        
+        # Add the last chunk if it exists
+        if current_chunk:
+            chunks.append(current_chunk.rstrip())
+        
+        return chunks
+    
+    async def _send_message_split(self, chat_id: str, text: str, **kwargs):
+        """Send a message, splitting it into multiple messages if needed.
+        
+        Args:
+            chat_id: The chat ID to send to
+            text: The message text
+            **kwargs: Additional arguments to pass to send_message (e.g., parse_mode, reply_markup)
+        
+        Returns:
+            The last sent message object
+        """
+        chunks = self._split_message(text)
+        
+        # For the first N-1 chunks, send without reply_markup
+        last_message = None
+        for i, chunk in enumerate(chunks):
+            is_last = (i == len(chunks) - 1)
+            
+            # Only add reply_markup to the last message
+            msg_kwargs = kwargs.copy()
+            if not is_last and 'reply_markup' in msg_kwargs:
+                del msg_kwargs['reply_markup']
+            
+            # Add part indicator if message was split
+            if len(chunks) > 1:
+                part_text = f"[Part {i+1}/{len(chunks)}]\n\n{chunk}"
+            else:
+                part_text = chunk
+            
+            last_message = await self.application.bot.send_message(
+                chat_id=chat_id,
+                text=part_text,
+                **msg_kwargs
+            )
+        
+        return last_message
+    
+    async def _reply_text_split(self, message, text: str, **kwargs):
+        """Reply to a message, splitting it into multiple messages if needed.
+        
+        Args:
+            message: The message object to reply to
+            text: The message text
+            **kwargs: Additional arguments to pass to reply_text (e.g., parse_mode, reply_markup)
+        
+        Returns:
+            The last sent message object
+        """
+        chunks = self._split_message(text)
+        
+        # For the first N-1 chunks, send without reply_markup
+        last_message = None
+        for i, chunk in enumerate(chunks):
+            is_last = (i == len(chunks) - 1)
+            
+            # Only add reply_markup to the last message
+            msg_kwargs = kwargs.copy()
+            if not is_last and 'reply_markup' in msg_kwargs:
+                del msg_kwargs['reply_markup']
+            
+            # Add part indicator if message was split
+            if len(chunks) > 1:
+                part_text = f"[Part {i+1}/{len(chunks)}]\n\n{chunk}"
+            else:
+                part_text = chunk
+            
+            last_message = await message.reply_text(part_text, **msg_kwargs)
+        
+        return last_message
 
     async def start(self):
         """Start the Telegram bot."""
@@ -30,7 +174,14 @@ class TelegramChannel(BaseChannel):
             print("Error: TELEGRAM_BOT_TOKEN not found.")
             return
 
-        self.application = Application.builder().token(self.token).build()
+        # Configure timeouts for better reliability on slower networks
+        self.application = (
+            Application.builder()
+            .token(self.token)
+            .read_timeout(180)  # Increase read timeout to 30 seconds
+            .write_timeout(180)  # Increase write timeout to 30 seconds
+            .build()
+        )
 
         self.application.add_handler(CommandHandler("start", self._start_command))
         self.application.add_handler(CommandHandler("help", self._help_command))
@@ -87,23 +238,22 @@ class TelegramChannel(BaseChannel):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await self.application.bot.send_message(
+        await self._send_message_split(
             chat_id=self.chat_id,
             text=f"📝 **Review Draft**\n\n{post.content}\n\nPlatform: {post.platform}",
-            reply_markup=reply_markup,
-            parse_mode="Markdown"
+            reply_markup=reply_markup
         )
 
     async def notify_error(self, error_message: str):
         if self.application and self.chat_id:
-            await self.application.bot.send_message(
+            await self._send_message_split(
                 chat_id=self.chat_id,
                 text=f"❌ Error: {error_message}"
             )
 
     async def notify_success(self, message: str):
         if self.application and self.chat_id:
-            await self.application.bot.send_message(
+            await self._send_message_split(
                 chat_id=self.chat_id,
                 text=f"✅ {message}"
             )
@@ -159,7 +309,7 @@ class TelegramChannel(BaseChannel):
             if scout.last_run:
                 info += f"\nLast Run: {scout.last_run.strftime('%Y-%m-%d %H:%M')}"
             
-            await update.message.reply_text(info, reply_markup=reply_markup, parse_mode="Markdown")
+            await self._reply_text_split(update.message, info, reply_markup=reply_markup, parse_mode="Markdown")
 
     async def check_pending_posts(self, context: ContextTypes.DEFAULT_TYPE):
         """Check DB for posts with status 'pending_review'."""
@@ -190,12 +340,22 @@ class TelegramChannel(BaseChannel):
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text=f"📝 **Review Draft**\n\n{post.content}\n\nPlatform: {post.platform}",
-                    reply_markup=reply_markup,
-                    parse_mode="Markdown"
-                )
+                # Send using split method
+                chunks = self._split_message(f"📝 **Review Draft**\n\n{post.content}\n\nPlatform: {post.platform}")
+                for i, chunk in enumerate(chunks):
+                    is_last = (i == len(chunks) - 1)
+                    
+                    # Only add reply_markup to the last message
+                    if len(chunks) > 1:
+                        part_text = f"[Part {i+1}/{len(chunks)}]\n\n{chunk}"
+                    else:
+                        part_text = chunk
+                    
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=part_text,
+                        reply_markup=reply_markup if is_last else None
+                    )
                 
                 # Update status to 'reviewing' to avoid re-sending
                 post.status = "reviewing"
@@ -242,6 +402,27 @@ class TelegramChannel(BaseChannel):
                             await query.edit_message_text(f"❌ Error posting to X: {e}")
                     else:
                         await query.edit_message_text("❌ Authentication failed for X.")
+                elif post.platform == "substack":
+                    provider = SubstackProvider()
+                    if provider.authenticate():
+                        try:
+                            draft_id = provider.post(post.content)
+                            post.status = "posted"
+                            post.external_id = draft_id
+                            post.posted_at = datetime.utcnow()
+                            session.add(post)
+                            session.commit()
+                            # Construct the draft edit URL
+                            subdomain = os.getenv("SUBSTACK_SUBDOMAIN")
+                            edit_url = f"https://{subdomain}.substack.com/publish/post/{draft_id}"
+                            await query.edit_message_text(
+                                f"✅ Substack draft created!\n\n"
+                                f"📝 Edit and publish at:\n{edit_url}"
+                            )
+                        except Exception as e:
+                            await query.edit_message_text(f"❌ Error creating Substack draft: {e}")
+                    else:
+                        await query.edit_message_text("❌ Authentication failed for Substack. Check your SUBSTACK_SUBDOMAIN, SUBSTACK_SID, and SUBSTACK_LLI environment variables.")
                 else:
                     await query.edit_message_text(f"❌ Platform '{post.platform}' not supported via bot yet.")
                     
@@ -254,7 +435,8 @@ class TelegramChannel(BaseChannel):
             elif action == "feedback":
                 user_id = query.from_user.id
                 self.waiting_for_feedback[user_id] = post.id
-                await query.message.reply_text(
+                await self._reply_text_split(
+                    query.message,
                     "Please reply to this message with your feedback or instructions to improve the post.\n"
                     "Example: 'Make it shorter', 'Add hashtags', 'Change tone to professional'"
                 )
@@ -309,7 +491,7 @@ class TelegramChannel(BaseChannel):
                     
                 except Exception as e:
                     logger.error(f"Error regenerating post: {e}", exc_info=True)
-                    await update.message.reply_text(f"❌ Error regenerating post: {e}")
+                    await self._reply_text_split(update.message, f"❌ Error regenerating post: {e}")
                     
     async def _handle_run_scout(self, query, scout_id: int):
         """Handle the run scout action."""
@@ -353,7 +535,7 @@ class TelegramChannel(BaseChannel):
                 draft_content = await asyncio.to_thread(run_logic)
                 
                 if not draft_content:
-                    await self.application.bot.send_message(
+                    await self._send_message_split(
                         chat_id=self.chat_id,
                         text=f"⚠️ Scout '{scout.name}' finished but found no suitable content."
                     )
@@ -375,7 +557,7 @@ class TelegramChannel(BaseChannel):
                     session.add(db_post)
                     session.commit()
                     
-                await self.application.bot.send_message(
+                await self._send_message_split(
                     chat_id=self.chat_id,
                     text=f"✅ Scout '{scout.name}' finished! Draft created."
                 )
@@ -390,7 +572,7 @@ class TelegramChannel(BaseChannel):
 
             except Exception as e:
                 logger.error(f"Error running scout: {e}", exc_info=True)
-                await self.application.bot.send_message(
+                await self._send_message_split(
                     chat_id=self.chat_id,
                     text=f"❌ Error running scout '{scout.name}': {e}"
                 )
@@ -413,11 +595,10 @@ class TelegramChannel(BaseChannel):
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
                 
-                await self.application.bot.send_message(
+                await self._send_message_split(
                     chat_id=self.chat_id,
                     text=f"📝 **Review Draft**\n\n{post.content}\n\nPlatform: {post.platform}",
-                    reply_markup=reply_markup,
-                    parse_mode="Markdown"
+                    reply_markup=reply_markup
                 )
                 post.status = "reviewing"
                 session.add(post)

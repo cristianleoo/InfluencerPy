@@ -24,6 +24,7 @@ from influencerpy.database import create_db_and_tables, get_session
 from influencerpy.types.schema import PostModel
 from influencerpy.logger import get_app_logger
 from influencerpy.platforms.x_platform import XProvider
+from influencerpy.platforms.substack_platform import SubstackProvider
 
 # Safely check and load .env file, handling permission errors
 try:
@@ -192,7 +193,7 @@ def _quick_post_flow():
 
     # Platform selection
     platforms = questionary.checkbox(
-        "Select Platforms:", choices=["X (Twitter)"]
+        "Select Platforms:", choices=["X (Twitter)", "Substack"]
     ).unsafe_ask()
 
     if not platforms:
@@ -224,6 +225,30 @@ def _quick_post_flow():
                         console.print("[red]X Authentication failed.[/red]")
                 except Exception as e:
                     console.print(f"[red]Error posting to X: {e}[/red]")
+            elif platform == "Substack":
+                try:
+                    from influencerpy.platforms.substack_platform import SubstackProvider
+                    provider = SubstackProvider()
+                    if provider.authenticate():
+                        with console.status("Creating Substack draft..."):
+                            draft_id = provider.post(content)
+                        console.print(f"[green]✓ Substack draft created (ID: {draft_id})[/green]")
+
+                        # Save to DB
+                        with next(get_session()) as session:
+                            db_post = PostModel(
+                                content=content,
+                                platform="substack",
+                                status="posted",
+                                external_id=draft_id,
+                                posted_at=datetime.utcnow(),
+                            )
+                            session.add(db_post)
+                            session.commit()
+                    else:
+                        console.print("[red]Substack Authentication failed.[/red]")
+                except Exception as e:
+                    console.print(f"[red]Error posting to Substack: {e}[/red]")
 
     questionary.press_any_key_to_continue().ask()
 
@@ -516,6 +541,87 @@ def _setup_stability_credentials():
     console.print("[green]✓ Stability AI credentials saved![/green]")
 
 
+def _setup_substack_credentials():
+    """Setup Substack credentials."""
+    console.print(
+        Panel.fit(
+            "[bold cyan]Substack Setup[/bold cyan]\n\n"
+            "[yellow]How to get Substack Cookies:[/yellow]\n"
+            "1. Log in to your Substack account in a browser (Chrome/Firefox/Safari).\n"
+            "2. Open Developer Tools (F12 or Right-click → Inspect).\n"
+            "3. Go to the 'Application' tab (Chrome) or 'Storage' tab (Firefox).\n"
+            "4. Click on 'Cookies' → 'https://substack.com'.\n"
+            "5. Find and copy the values for:\n"
+            "   • [bold]substack.sid[/bold] - Your session ID\n"
+            "   • [bold]substack.lli[/bold] - Your login info\n"
+            "6. Paste them below when prompted.\n\n"
+            "[dim]Note: These cookies allow posting as drafts on your Substack.\n"
+            "They are stored securely in your .env file.[/dim]",
+            title="Substack Setup",
+            border_style="cyan",
+        )
+    )
+
+    _ensure_env_file()
+
+    # Get subdomain first
+    subdomain = questionary.text(
+        "Your Substack URL or subdomain (e.g., 'mynewsletter' or 'mynewsletter.substack.com'):",
+        default=os.getenv("SUBSTACK_SUBDOMAIN", "")
+    ).unsafe_ask()
+    
+    if subdomain:
+        # Clean up subdomain - remove .substack.com if user included it
+        subdomain = subdomain.strip()
+        if subdomain.endswith('.substack.com'):
+            subdomain = subdomain.replace('.substack.com', '')
+        # Also handle if they provided full URL
+        if subdomain.startswith('https://'):
+            subdomain = subdomain.replace('https://', '').replace('.substack.com', '')
+        if subdomain.startswith('http://'):
+            subdomain = subdomain.replace('http://', '').replace('.substack.com', '')
+        
+        set_key(ENV_FILE, "SUBSTACK_SUBDOMAIN", subdomain)
+        os.environ["SUBSTACK_SUBDOMAIN"] = subdomain
+        console.print(f"[dim]Using subdomain: {subdomain}[/dim]")
+
+    # Get cookies
+    console.print("\n[bold]Now paste your cookie values:[/bold]")
+    
+    sid = questionary.password(
+        "substack.sid (session ID):",
+        default=os.getenv("SUBSTACK_SID", "")
+    ).unsafe_ask()
+    
+    if sid:
+        set_key(ENV_FILE, "SUBSTACK_SID", sid)
+        os.environ["SUBSTACK_SID"] = sid
+
+    lli = questionary.password(
+        "substack.lli (login info):",
+        default=os.getenv("SUBSTACK_LLI", "")
+    ).unsafe_ask()
+    
+    if lli:
+        set_key(ENV_FILE, "SUBSTACK_LLI", lli)
+        os.environ["SUBSTACK_LLI"] = lli
+
+    # Validate credentials
+    if subdomain and sid and lli:
+        console.print("\n[yellow]Validating credentials...[/yellow]")
+        try:
+            from influencerpy.platforms.substack_platform import SubstackProvider
+            provider = SubstackProvider()
+            if provider.authenticate():
+                console.print("[green]✓ Substack credentials validated successfully![/green]")
+            else:
+                console.print("[red]✗ Could not validate credentials. Please check your values.[/red]")
+        except Exception as e:
+            console.print(f"[red]✗ Validation error: {e}[/red]")
+    else:
+        console.print("[green]✓ Substack credentials saved![/green]")
+
+
 def _setup_langfuse_credentials():
     """Setup Langfuse credentials."""
     console.print(
@@ -662,6 +768,7 @@ def _setup_credentials():
             "Select platform to configure:",
             choices=[
                 "X (Twitter)",
+                "Substack",
                 "Telegram",
                 "Model Providers (Gemini, Anthropic, Stability AI)",
                 "Langfuse (Tracing)",
@@ -671,6 +778,8 @@ def _setup_credentials():
 
         if choice == "X (Twitter)":
             _setup_x_credentials()
+        elif choice == "Substack":
+            _setup_substack_credentials()
         elif choice == "Telegram":
             _setup_telegram_credentials()
         elif choice == "Model Providers (Gemini, Anthropic, Stability AI)":
@@ -801,6 +910,7 @@ def _create_scout_flow(manager):
             ),
             questionary.Choice(title="📡 RSS (Follow specific feed URLs)", value="rss"),
             questionary.Choice(title="👾 Reddit (Follow subreddits)", value="reddit"),
+            questionary.Choice(title="📰 Substack (Follow newsletters)", value="substack"),
             questionary.Choice(
                 title="🌐 Browser (Navigate & Extract) [EXPERIMENTAL]", value="browser"
             ),
@@ -825,11 +935,11 @@ def _create_scout_flow(manager):
                     result = rss(action="fetch", url=feed, max_entries=1)
 
                 if isinstance(result, list) and len(result) > 0:
-                    # Subscribe to the feed so the agent can find it by listing
-                    rss(action="subscribe", url=feed)
+                    # Don't subscribe yet - we need the scout_id first
+                    # Store the feed URL in config for later subscription
                     config["feeds"] = [feed]
                     config["tools"] = ["rss"]
-                    console.print(f"[green]Successfully subscribed to {feed}[/green]")
+                    console.print(f"[green]Feed validated: {feed}[/green]")
                     break
                 else:
                     console.print("[red]Invalid RSS feed or empty.[/red]")
@@ -851,6 +961,18 @@ def _create_scout_flow(manager):
                     if isinstance(result, list) and len(result) > 0:
                         config["subreddits"] = [subreddit]
                         config["tools"] = ["reddit"]
+                        
+                        # Ask for default sorting preference
+                        sort_choice = questionary.select(
+                            "Default sort method:",
+                            choices=[
+                                questionary.Choice(title="🔥 Hot (trending content)", value="hot"),
+                                questionary.Choice(title="🆕 New (most recent)", value="new"),
+                                questionary.Choice(title="🏆 Top (highest rated)", value="top"),
+                                questionary.Choice(title="📈 Rising (gaining momentum)", value="rising"),
+                            ],
+                        ).unsafe_ask()
+                        config["reddit_sort"] = sort_choice
                         break
                     elif isinstance(result, dict) and "error" in result:
                         console.print(f"[red]Error: {result['error']}[/red]")
@@ -863,6 +985,45 @@ def _create_scout_flow(manager):
                 except Exception as e:
                     console.print("[red]Error validating subreddit[/red]")
                     if not questionary.confirm("Try another name?").unsafe_ask():
+                        return
+    elif type_choice == "substack":
+        while True:
+            newsletter_url = questionary.text(
+                "Newsletter URL (e.g. 'https://newsletter.substack.com' or 'mynewsletter.substack.com'):"
+            ).unsafe_ask()
+            
+            # Normalize the URL
+            if not newsletter_url.startswith('http'):
+                newsletter_url = f'https://{newsletter_url}'
+            
+            with console.status("Validating newsletter..."):
+                try:
+                    from influencerpy.platforms.substack import Newsletter
+                    newsletter = Newsletter(newsletter_url)
+                    # Try to get posts to validate
+                    posts = newsletter.get_posts(limit=1)
+                    if posts and len(posts) > 0:
+                        config["newsletter_url"] = newsletter_url
+                        config["tools"] = ["substack"]
+                        
+                        # Ask for sorting preference
+                        sort_choice = questionary.select(
+                            "Default sort method:",
+                            choices=[
+                                questionary.Choice(title="🆕 New (most recent)", value="new"),
+                                questionary.Choice(title="🏆 Top (most popular)", value="top"),
+                            ],
+                        ).unsafe_ask()
+                        config["substack_sort"] = sort_choice
+                        console.print(f"[green]Newsletter validated: {newsletter_url}[/green]")
+                        break
+                    else:
+                        console.print("[red]Newsletter not found or has no posts.[/red]")
+                        if not questionary.confirm("Try another URL?").unsafe_ask():
+                            return
+                except Exception as e:
+                    console.print(f"[red]Error validating newsletter: {e}[/red]")
+                    if not questionary.confirm("Try another URL?").unsafe_ask():
                         return
     elif type_choice == "browser":
         console.print("\n[yellow]⚠️  Browser tool is EXPERIMENTAL[/yellow]")
@@ -897,19 +1058,6 @@ def _create_scout_flow(manager):
                 "[yellow]Warning: STABILITY_API_KEY not found in environment.[/yellow]"
             )
         config["image_generation"] = True
-
-    # Langfuse Tracing
-    # Automatically enable if credentials exist
-    if (
-        os.getenv("LANGFUSE_PUBLIC_KEY")
-        and os.getenv("LANGFUSE_SECRET_KEY")
-        and os.getenv("LANGFUSE_HOST")
-    ):
-        # config["langfuse_enabled"] = True # Deprecated: Now handled globally
-        pass
-    else:
-        # config["langfuse_enabled"] = False # Deprecated
-        pass
 
     # Scheduling
     schedule_choice = questionary.select(
@@ -1003,13 +1151,15 @@ def _create_scout_flow(manager):
     # Multi-platform selection (checkbox)
     platform_choices = questionary.checkbox(
         "Select platforms to post to:",
-        choices=["X (Twitter)"],  # Add more platforms here as they're implemented
+        choices=["X (Twitter)", "Substack"],
     ).unsafe_ask()
 
     # Map display names to internal platform IDs
     platforms = []
     if "X (Twitter)" in platform_choices:
         platforms.append("x")
+    if "Substack" in platform_choices:
+        platforms.append("substack")
 
     manager.create_scout(
         name,
@@ -1020,6 +1170,22 @@ def _create_scout_flow(manager):
         platforms=platforms,
         telegram_review=telegram_review,
     )
+    
+    # Subscribe to RSS feeds after scout creation (so we have scout_id)
+    if type_choice == "rss" and config.get("feeds"):
+        from influencerpy.tools.rss import rss
+        scout = manager.get_scout(name)
+        
+        for feed_url in config["feeds"]:
+            try:
+                # Set scout_id in environment for RSS tool
+                import os
+                os.environ["INFLUENCERPY_SCOUT_ID"] = str(scout.id)
+                rss(action="subscribe", url=feed_url)
+                console.print(f"[green]✓ Subscribed to feed for scout '{name}'[/green]")
+            except Exception as e:
+                console.print(f"[yellow]Warning: Could not subscribe to feed: {e}[/yellow]")
+    
     console.print(f"[green]Scout '{name}' created successfully![/green]")
 
     # Offer immediate calibration
@@ -1199,7 +1365,24 @@ def _run_startup_checks():
     else:
         table.add_row("X (Twitter)", "[yellow]Not Configured[/yellow]", "Optional")
 
-    # 3. Stability AI Check
+    # 3. Substack Check
+    if os.getenv("SUBSTACK_SUBDOMAIN") and os.getenv("SUBSTACK_SID") and os.getenv("SUBSTACK_LLI"):
+        try:
+            provider = SubstackProvider()
+            if provider.authenticate():
+                table.add_row(
+                    "Substack", "[green]Connected[/green]", "Auth successful"
+                )
+            else:
+                table.add_row(
+                    "Substack", "[red]Auth Failed[/red]", "Check credentials"
+                )
+        except:
+            table.add_row("Substack", "[red]Error[/red]", "Connection failed")
+    else:
+        table.add_row("Substack", "[yellow]Not Configured[/yellow]", "Optional")
+
+    # 4. Stability AI Check
     if os.getenv("STABILITY_API_KEY"):
         table.add_row("Stability AI", "[green]Configured[/green]", "Key found")
     else:
@@ -1632,6 +1815,20 @@ def _update_scout_flow(manager, scout):
                         result = reddit(subreddit=new_sub, limit=1)
                         if isinstance(result, list) and len(result) > 0:
                             config["subreddits"] = [new_sub]
+                            
+                            # Ask for sorting preference
+                            current_sort = config.get("reddit_sort", "hot")
+                            sort_choice = questionary.select(
+                                "Sort method:",
+                                choices=[
+                                    questionary.Choice(title="🔥 Hot (trending content)", value="hot"),
+                                    questionary.Choice(title="🆕 New (most recent)", value="new"),
+                                    questionary.Choice(title="🏆 Top (highest rated)", value="top"),
+                                    questionary.Choice(title="📈 Rising (gaining momentum)", value="rising"),
+                                ],
+                                default=current_sort
+                            ).unsafe_ask()
+                            config["reddit_sort"] = sort_choice
                             break
                         else:
                             console.print("[red]Invalid subreddit or empty.[/red]")
@@ -1734,13 +1931,16 @@ def _update_scout_flow(manager, scout):
         platform_choices = questionary.checkbox(
             "Select platforms to post to:",
             choices=[
-                questionary.Choice("X (Twitter)", checked="x" in current_platforms)
+                questionary.Choice("X (Twitter)", checked="x" in current_platforms),
+                questionary.Choice("Substack", checked="substack" in current_platforms)
             ],
         ).unsafe_ask()
 
         platforms = []
         if "X (Twitter)" in platform_choices:
             platforms.append("x")
+        if "Substack" in platform_choices:
+            platforms.append("substack")
 
         # Update scout model directly for platforms
         scout.platforms = json.dumps(platforms)
@@ -2140,7 +2340,7 @@ def scouts():
 
                         # Select platform
                         platform = questionary.select(
-                            "Select Platform:", choices=["X (Twitter)", "Skip"]
+                            "Select Platform:", choices=["X (Twitter)", "Substack", "Skip"]
                         ).unsafe_ask()
 
                         if platform == "X (Twitter)":
@@ -2166,6 +2366,31 @@ def scouts():
                                     console.print("[green]Posted successfully![/green]")
                             except Exception as e:
                                 console.print(f"[red]Error posting: {e}[/red]")
+                        
+                        elif platform == "Substack":
+                            from influencerpy.platforms.substack_platform import SubstackProvider
+
+                            try:
+                                provider = SubstackProvider()
+                                if not provider.authenticate():
+                                    console.print(
+                                        "[bold red]Authentication failed. Missing credentials.[/bold red]"
+                                    )
+                                    if questionary.confirm(
+                                        "Setup credentials now?"
+                                    ).unsafe_ask():
+                                        _setup_credentials()
+                                        if provider.authenticate():
+                                            draft_id = provider.post(content)
+                                            console.print(
+                                                f"[green]Draft created successfully! (ID: {draft_id})[/green]"
+                                            )
+                                else:
+                                    draft_id = provider.post(content)
+                                    console.print(f"[green]Draft created successfully! (ID: {draft_id})[/green]")
+                            except Exception as e:
+                                console.print(f"[red]Error posting: {e}[/red]")
+                        
                         break  # Exit review loop after posting
 
         elif choice == "Calibrate Scout":

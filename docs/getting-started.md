@@ -7,7 +7,8 @@ Before you begin, ensure you have the following:
 1.  **Python 3.9 or higher**: Check with `python --version`.
 2.  **API Keys**: You will need API keys for the services you intend to use:
     *   **Google Gemini API Key** (Required for AI features): Get it from [Google AI Studio](https://aistudio.google.com/).
-    *   **X (Twitter) API Keys** (Required for posting): You need a Developer Account with "Read and Write" permissions. Get them from the [X Developer Portal](https://developer.twitter.com/en/portal/dashboard).
+    *   **X (Twitter) API Keys** (Optional for posting): You need a Developer Account with "Read and Write" permissions. Get them from the [X Developer Portal](https://developer.twitter.com/en/portal/dashboard).
+    *   **Substack Cookies** (Optional for posting/monitoring): See the [Substack Setup Guide](../SUBSTACK_SETUP.md) for details.
 
 ## Installation
 

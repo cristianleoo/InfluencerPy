@@ -13,6 +13,7 @@ from strands.handlers.callback_handler import null_callback_handler
 from influencerpy.tools.search import google_search
 from influencerpy.tools.reddit import reddit
 from influencerpy.tools.arxiv_tool import arxiv_search
+from influencerpy.tools.http_tool import http_request
 from influencerpy.core.interfaces import AgentProvider
 from influencerpy.providers.gemini import GeminiProvider
 from influencerpy.providers.anthropic import AnthropicProvider
@@ -112,10 +113,15 @@ class ScoutManager:
         return self.session.exec(select(ScoutModel).where(ScoutModel.name == name)).first()
 
     def _execute_agent_run(self, scout: ScoutModel, config: dict, agent_tools: list, limit: int, 
-                          override_query: str = None, retry_attempt: int = 0, retry_modifications: dict = None) -> List[ContentItem]:
-        """Execute a single agent run and return deduplicated items."""
+                          override_query: str = None, retry_attempt: int = 0, retry_modifications: dict = None) -> tuple[List[ContentItem], bool]:
+        """Execute a single agent run and return deduplicated items.
+        
+        Returns:
+            tuple: (items, should_retry) where should_retry indicates if retry makes sense
+        """
         logger = get_scout_logger(scout.name)
         items = []
+        should_retry = True  # Default: retry on empty results
         
         try:
             gen_config = config.get("generation_config", {})
@@ -153,6 +159,8 @@ class ScoutManager:
             feeds = config.get("feeds", [])
             subreddits = config.get("subreddits", [])
             tools_config = config.get("tools", [])
+            reddit_sort = config.get("reddit_sort", "hot")
+            sort_hint = ""
             
             if retry_modifications:
                 if "query" in retry_modifications:
@@ -161,6 +169,10 @@ class ScoutManager:
                     feeds = retry_modifications["feeds"]
                 if "subreddits" in retry_modifications:
                     subreddits = retry_modifications["subreddits"]
+                if "reddit_sort" in retry_modifications:
+                    reddit_sort = retry_modifications["reddit_sort"]
+                if "sort_hint" in retry_modifications:
+                    sort_hint = retry_modifications["sort_hint"]
             
             if scout.type == "meta":
                 orchestration_prompt = config.get("orchestration_prompt", "Coordinate the available tools to find interesting content.")
@@ -179,11 +191,14 @@ class ScoutManager:
                     goal += " Try exploring different feeds or looking further back in time to find new content."
             elif subreddits:
                 sub_list = ", ".join(subreddits)
-                goal = f"Find interesting content from the following subreddits: {sub_list}. Use the 'reddit' tool."
+                goal = f"Find interesting content from the following subreddits: {sub_list}. Use the 'reddit' tool with sort='{reddit_sort}'."
                 if query:
                     goal += f" Filter for content related to: '{query}'."
                 if retry_attempt > 0:
-                    goal += " Try exploring different topics or sorting methods to find new content."
+                    if sort_hint:
+                        goal += f" {sort_hint}."
+                    else:
+                        goal += " Try exploring different topics or sorting methods to find new content."
             elif "arxiv" in tools_config:
                 date_filter = config.get("date_filter")
                 days_back_map = {
@@ -241,40 +256,86 @@ The tool will save the image and return the path (or you can infer it from the t
                 logger.info(f"Retry attempt {retry_attempt}: Executing agent with modified parameters...")
             else:
                 logger.info("Executing agent...")
-            response = agent(prompt, structured_output_model=ScoutResponse)
-            logger.info("Agent execution completed.")
             
-            data = response.structured_output.items
-            for i, entry in enumerate(data):
-                # Check for duplicates via embeddings
-                content_text = f"{entry.title} {entry.summary or ''}"
-                if self.embedding_manager.is_similar(content_text):
-                    logger.info(f"Skipping duplicate content: {entry.title}")
-                    continue
-                    
-                # Index the new content
-                self.embedding_manager.add_item(content_text, source_type="retrieved")
+            try:
+                response = agent(prompt, structured_output_model=ScoutResponse)
+                logger.info("Agent execution completed.")
                 
-                items.append(ContentItem(
-                    source_id=f"scout_gen_{int(datetime.utcnow().timestamp())}_{i}",
-                    title=entry.title,
-                    url=entry.url,
-                    summary=entry.summary,
-                    metadata={"sources": entry.sources, "image_path": entry.image_path}
-                ))
-            logger.info(f"Agent found {len(items)} items (after deduplication).")
+                data = response.structured_output.items
+                for i, entry in enumerate(data):
+                    # Check for duplicates via embeddings
+                    content_text = f"{entry.title} {entry.summary or ''}"
+                    if self.embedding_manager.is_similar(content_text):
+                        logger.info(f"Skipping duplicate content: {entry.title}")
+                        continue
+                        
+                    # Index the new content
+                    self.embedding_manager.add_item(content_text, source_type="retrieved")
+                    
+                    items.append(ContentItem(
+                        source_id=f"scout_gen_{int(datetime.utcnow().timestamp())}_{i}",
+                        title=entry.title,
+                        url=entry.url,
+                        summary=entry.summary,
+                        metadata={"sources": entry.sources, "image_path": entry.image_path}
+                    ))
+                logger.info(f"Agent found {len(items)} items (after deduplication).")
+                
+            except Exception as e:
+                # Check if it's a structured output error
+                from strands.types.exceptions import StructuredOutputException
+                if isinstance(e, StructuredOutputException):
+                    logger.error("Agent failed to return properly formatted response. This may indicate:")
+                    logger.error("  - The prompt may need refinement")
+                    logger.error("  - The model may be having difficulty with the task")
+                    logger.error("  - Try simplifying your prompt or using a different model")
+                    # Don't retry for structured output errors - they won't be fixed by changing parameters
+                    raise
+                else:
+                    logger.error(f"Agent execution failed: {e}", exc_info=True)
                 
         except Exception as e:
-            logger.error(f"Agent execution failed: {e}", exc_info=True)
+            # Outer catch for StructuredOutputException to prevent retries
+            from strands.types.exceptions import StructuredOutputException
+            if isinstance(e, StructuredOutputException):
+                # Return empty but don't trigger duplicate retry logic
+                should_retry = False  # Don't retry structured output errors
+                return items, should_retry
+            logger.error(f"Unexpected error in agent run: {e}", exc_info=True)
         
-        return items
+        return items, should_retry
 
     def _generate_retry_modifications(self, scout: ScoutModel, config: dict, query: str, retry_attempt: int) -> dict:
         """Generate modifications for retry attempts to find different content."""
         modifications = {}
         
+        # For Reddit scouts, try different sorting methods and parameters
+        if config.get("subreddits"):
+            # Cycle through different sorting methods on retries
+            sort_methods = ["hot", "new", "top", "rising"]
+            current_sort = config.get("reddit_sort", "hot")
+            
+            # Try a different sort method
+            try:
+                current_index = sort_methods.index(current_sort)
+                next_index = (current_index + retry_attempt) % len(sort_methods)
+                modifications["reddit_sort"] = sort_methods[next_index]
+            except ValueError:
+                # If current sort isn't in our list, start with "new"
+                modifications["reddit_sort"] = sort_methods[retry_attempt % len(sort_methods)]
+            
+            # Also modify the goal to instruct the agent to use the new sort
+            sort_instructions = {
+                "hot": "trending and popular",
+                "new": "most recent and fresh",
+                "top": "highest rated and best",
+                "rising": "gaining momentum"
+            }
+            new_sort = modifications["reddit_sort"]
+            modifications["sort_hint"] = f"Focus on {sort_instructions.get(new_sort, 'different')} content"
+        
         # For RSS scouts, try different feeds or increase time range
-        if config.get("feeds"):
+        elif config.get("feeds"):
             # On retry, suggest exploring different feeds
             modifications["query"] = query + " (try different feeds or older entries)" if query else "try different feeds or older entries"
         
@@ -340,6 +401,9 @@ The tool will save the image and return the path (or you can infer it from the t
             # Check for tools
             tools_config = config.get("tools", [])
             if tools_config:
+                # Set scout_id in environment for RSS feed isolation
+                os.environ["INFLUENCERPY_SCOUT_ID"] = str(scout.id)
+                
                 # Initialize Agent with selected tools
                 agent_tools = []
                 if "rss" in tools_config:
@@ -417,6 +481,8 @@ The tool will save the image and return the path (or you can infer it from the t
                     agent_tools.append(reddit)
                 if "arxiv" in tools_config:
                     agent_tools.append(arxiv_search)
+                if "http_request" in tools_config:
+                    agent_tools.append(http_request)
                 
                 # Check for image generation
                 if config.get("image_generation"):
@@ -435,13 +501,13 @@ The tool will save the image and return the path (or you can infer it from the t
                     
                     # Initial run
                     retry_attempt = 0
-                    items = self._execute_agent_run(
+                    items, should_retry = self._execute_agent_run(
                         scout, config, agent_tools, limit, override_query, retry_attempt
                     )
                     
-                    # Retry if all items were duplicates
+                    # Retry if all items were duplicates (but not for structured output errors)
                     retry_count = 0
-                    while len(items) == 0 and retry_count < max_retries:
+                    while len(items) == 0 and should_retry and retry_count < max_retries:
                         retry_count += 1
                         retry_attempt = retry_count
                         
@@ -453,7 +519,7 @@ The tool will save the image and return the path (or you can infer it from the t
                         )
                         
                         # Execute retry
-                        retry_items = self._execute_agent_run(
+                        retry_items, should_retry = self._execute_agent_run(
                             scout, config, agent_tools, limit, override_query, retry_attempt, retry_modifications
                         )
                         
@@ -461,10 +527,13 @@ The tool will save the image and return the path (or you can infer it from the t
                             items = retry_items
                             logger.info(f"Retry successful! Found {len(items)} new items.")
                             break
+                        elif not should_retry:
+                            logger.warning("Retry aborted due to model/prompt error (not duplicate content).")
+                            break
                         else:
                             logger.info(f"Retry {retry_count} found no new items.")
                     
-                    if len(items) == 0 and retry_count > 0:
+                    if len(items) == 0 and retry_count > 0 and should_retry:
                         logger.warning(f"All retry attempts exhausted. No new content found after {retry_count} retries.")
             
             # Update last run

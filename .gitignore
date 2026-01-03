@@ -212,3 +212,4 @@ __marimo__/
 .influencerpy/
 example/
 uv.lock
+bot.pid

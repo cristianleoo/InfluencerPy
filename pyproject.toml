@@ -25,6 +25,7 @@ dependencies = [
   "pyfiglet",
   "mkdocs-material",
   "arxiv",
+  "pytz",
   "beautifulsoup4",
   "apscheduler",
   "strands-agents-tools",

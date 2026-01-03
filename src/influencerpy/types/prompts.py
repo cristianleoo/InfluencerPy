@@ -28,11 +28,21 @@ Do NOT try to fetch from URLs directly unless explicitly instructed.""",
     
     "reddit": """TOOL: reddit
 Use this to browse posts from specified subreddits.
+You can control the sort parameter: "hot" (trending), "new" (most recent), "top" (highest rated), or "rising" (gaining momentum).
 Look for highly upvoted, recent, and engaging discussions.""",
     
     "arxiv": """TOOL: arxiv
 Use this to search academic research papers.
 Provide search queries related to the research topic.""",
+    
+    "http_request": """TOOL: http_request
+Use this to fetch and read content from any web URL.
+You can extract the full page text or use CSS selectors to target specific elements.
+Examples:
+- http_request(url="https://example.com/article") - Read entire page
+- http_request(url="https://example.com", selector="article") - Extract just the article
+- http_request(url="https://example.com", extract_links=True) - Get all links from page
+Best for: Reading blog posts, articles, documentation, and web content.""",
     
     "browser": """TOOL: browser [EXPERIMENTAL]
 Use this to navigate web pages and extract content.
