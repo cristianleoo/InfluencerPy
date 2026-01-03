@@ -266,6 +266,28 @@
     
     
       <li class="md-tabs__item">
+        <a href="../examples/README.md" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Examples
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
         <a href="../concepts/scouts/" class="md-tabs__link">
           
   
@@ -692,6 +714,67 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#example-multi-feed-ai-research-scout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Example: Multi-Feed AI Research Scout
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Example: Multi-Feed AI Research Scout">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-this-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What This Does
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sample-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sample Output
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-multiple-feeds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why Multiple Feeds?
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#next-steps" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -705,6 +788,69 @@
     </ul>
   
 </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+      
+        
+        
+      
+    
+    <li class="md-nav__item md-nav__item--pruned md-nav__item--nested">
+      
+        
+  
+  
+  
+    <a href="../examples/README.md" class="md-nav__link">
+      
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+      
+        <span class="md-nav__icon md-icon"></span>
+      
+    </a>
+  
+
       
     </li>
   
@@ -1173,6 +1319,7 @@
 <li><strong>Choose Intent</strong>: Select <strong>"🔍 Content Discovery"</strong> (this finds and lists content)</li>
 <li><strong>Scout Type</strong>: Choose a source (RSS, Reddit, Arxiv, etc.)</li>
 <li><strong>Configure Source</strong>: Enter feed URLs, subreddits, or search queries</li>
+<li><strong>Tip</strong>: For RSS feeds, you can add multiple feeds separated by commas (e.g., <code>https://feed1.com/rss, https://feed2.com/rss</code>)</li>
 <li><strong>Schedule</strong>: Set when it should run (Daily, Weekly, or Manual)</li>
 <li><strong>Done!</strong>: Your scout is ready</li>
 </ol>
@@ -1192,6 +1339,64 @@
 <p>For <strong>Generation Intent</strong> scouts (optional), you'll receive:
 - Draft social media posts
 - Ready to post to X (Twitter) or copy/paste elsewhere</p>
+<h2 id="example-multi-feed-ai-research-scout">Example: Multi-Feed AI Research Scout<a class="headerlink" href="#example-multi-feed-ai-research-scout" title="Permanent link">&para;</a></h2>
+<p>Here's a complete example of creating a content discovery scout that monitors multiple AI research sources:</p>
+<h3 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Scout Name: AI Research Digest
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>Intent: 🔍 Content Discovery (Scouting)
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>Scout Type: 📡 RSS
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>RSS Feed URLs: https://tldr.takara.ai/api/papers, https://bair.berkeley.edu/blog/feed.xml, https://research.google/blog/rss/, https://news.mit.edu/rss/topic/artificial-intelligence2, https://news.microsoft.com/source/topics/ai/feed/
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>Schedule: Daily at 9:00 AM
+</span></code></pre></div>
+<h3 id="what-this-does">What This Does<a class="headerlink" href="#what-this-does" title="Permanent link">&para;</a></h3>
+<p>This scout will:</p>
+<ol>
+<li><strong>Monitor 5 AI research sources simultaneously</strong>:</li>
+<li>Takara AI TLDR Papers</li>
+<li>Berkeley AI Research (BAIR) Blog</li>
+<li>Google Research Blog</li>
+<li>MIT AI News</li>
+<li>
+<p>Microsoft AI News</p>
+</li>
+<li>
+<p><strong>Explore ALL feeds comprehensively</strong>: The AI automatically reads entries from ALL 5 feeds (not just one), gathering diverse content across all sources</p>
+</li>
+<li>
+<p><strong>Analyze and select the best content</strong>: The AI reviews articles from all feeds and selects the most relevant and interesting ones</p>
+</li>
+<li>
+<p><strong>Deliver a curated report</strong> to Telegram with:</p>
+</li>
+<li>Article titles and summaries</li>
+<li>Key insights from each piece</li>
+<li>Links to original sources</li>
+<li>Source attribution (showing which feed each article came from)</li>
+<li>Delivered every morning at 9 AM</li>
+</ol>
+<h3 id="sample-output">Sample Output<a class="headerlink" href="#sample-output" title="Permanent link">&para;</a></h3>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a># 📚 AI Research Digest - Content Discovery
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>*Found 6 interesting items from 5 sources*
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>## 1. New Advances in Multimodal Learning
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>Summary: Researchers at Berkeley demonstrate significant improvements in vision-language models...
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>🔗 Source: https://bair.berkeley.edu/blog/2025/...
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>## 2. Scaling Language Models: Latest Insights
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>Summary: Google Research shares findings on training efficiency...
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>🔗 Source: https://research.google/blog/...
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>[... more items ...]
+</span></code></pre></div>
+<h3 id="why-multiple-feeds">Why Multiple Feeds?<a class="headerlink" href="#why-multiple-feeds" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Broader coverage</strong>: Get diverse perspectives from academia and industry</li>
+<li><strong>All feeds explored</strong>: The agent automatically reads from ALL feeds, not just one</li>
+<li><strong>Better selection</strong>: More content from multiple sources means the AI can pick truly standout articles</li>
+<li><strong>Single digest</strong>: One consolidated report instead of multiple notifications</li>
+<li><strong>Source attribution</strong>: See which feed each article came from</li>
+<li><strong>Efficient</strong>: Set up once, runs automatically every day</li>
+</ul>
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <ul>
 <li>👉 <a href="../concepts/scouts/">Learn about Scouts</a> to understand scouting vs generation</li>
