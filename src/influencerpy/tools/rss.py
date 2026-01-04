@@ -308,6 +308,7 @@ class RSSManager:
         max_entries: int = 10,
         category: str = None,
         include_content: bool = False,
+        only_unprocessed: bool = True,
     ) -> Dict:
         with next(get_session()) as session:
             feed = session.get(RSSFeedModel, feed_id)
@@ -320,8 +321,13 @@ class RSSManager:
             query = (
                 select(RSSEntryModel)
                 .where(RSSEntryModel.feed_id == feed_id)
-                .order_by(RSSEntryModel.published.desc())
             )
+            
+            # Filter for unprocessed entries by default
+            if only_unprocessed:
+                query = query.where(RSSEntryModel.is_processed == False)
+            
+            query = query.order_by(RSSEntryModel.published.desc())
             entries = session.exec(query).all()
 
             # Filter by category in python (JSON storage)
@@ -337,6 +343,7 @@ class RSSManager:
                         continue
 
                 entry_dict = {
+                    "id": entry.id,  # Include entry ID for marking as processed
                     "title": entry.title,
                     "link": entry.link,
                     "published": str(entry.published),
@@ -366,6 +373,7 @@ class RSSManager:
         scout_id: Optional[int] = None,
         max_entries_per_feed: int = 5,
         include_content: bool = False,
+        only_unprocessed: bool = True,
     ) -> List[Dict]:
         """
         Read entries from ALL subscribed feeds (optionally filtered by scout_id).
@@ -375,6 +383,7 @@ class RSSManager:
             scout_id: Optional scout ID to filter feeds
             max_entries_per_feed: Maximum entries to return per feed
             include_content: Whether to include full content
+            only_unprocessed: If True, only return entries not yet presented to LLM
             
         Returns:
             List of dicts, each with feed info and its entries
@@ -392,15 +401,20 @@ class RSSManager:
                 entry_query = (
                     select(RSSEntryModel)
                     .where(RSSEntryModel.feed_id == feed.id)
-                    .order_by(RSSEntryModel.published.desc())
-                    .limit(max_entries_per_feed)
                 )
+                
+                # Filter for unprocessed entries by default
+                if only_unprocessed:
+                    entry_query = entry_query.where(RSSEntryModel.is_processed == False)
+                
+                entry_query = entry_query.order_by(RSSEntryModel.published.desc()).limit(max_entries_per_feed)
                 entries = session.exec(entry_query).all()
                 
                 # Format entries
                 formatted_entries = []
                 for entry in entries:
                     entry_dict = {
+                        "id": entry.id,  # Include entry ID for marking as processed
                         "title": entry.title,
                         "link": entry.link,
                         "published": str(entry.published),
@@ -416,14 +430,15 @@ class RSSManager:
                         entry_dict["content"] = entry.content
                     formatted_entries.append(entry_dict)
                 
-                # Add feed result
-                results.append({
-                    "feed_id": str(feed.id),
-                    "feed_title": feed.title,
-                    "feed_url": feed.url,
-                    "entry_count": len(formatted_entries),
-                    "entries": formatted_entries,
-                })
+                # Only add feed result if it has entries
+                if formatted_entries:
+                    results.append({
+                        "feed_id": str(feed.id),
+                        "feed_title": feed.title,
+                        "feed_url": feed.url,
+                        "entry_count": len(formatted_entries),
+                        "entries": formatted_entries,
+                    })
             
             return results
 
@@ -463,6 +478,68 @@ class RSSManager:
                 }
             )
 
+    def mark_processed(self, entry_ids: List[int]) -> Dict:
+        """
+        Mark RSS entries as processed/seen by the LLM.
+        This prevents them from being returned in future read operations.
+        
+        Args:
+            entry_ids: List of entry IDs to mark as processed
+            
+        Returns:
+            Dict with status and count of marked entries
+        """
+        with next(get_session()) as session:
+            marked_count = 0
+            for entry_id in entry_ids:
+                entry = session.get(RSSEntryModel, entry_id)
+                if entry:
+                    entry.is_processed = True
+                    entry.processed_at = datetime.utcnow()
+                    session.add(entry)
+                    marked_count += 1
+            
+            session.commit()
+            
+            return {
+                "status": "success",
+                "content": [{"text": f"Marked {marked_count} entries as processed"}],
+                "marked_count": marked_count,
+            }
+    
+    def reset_processed_status(self, feed_id: Optional[int] = None) -> Dict:
+        """
+        Reset processed status for entries (useful for testing or re-processing).
+        
+        Args:
+            feed_id: Optional feed ID to reset only that feed's entries
+            
+        Returns:
+            Dict with status and count of reset entries
+        """
+        with next(get_session()) as session:
+            query = select(RSSEntryModel).where(RSSEntryModel.is_processed == True)
+            
+            if feed_id:
+                query = query.where(RSSEntryModel.feed_id == feed_id)
+            
+            entries = session.exec(query).all()
+            reset_count = 0
+            
+            for entry in entries:
+                entry.is_processed = False
+                entry.processed_at = None
+                session.add(entry)
+                reset_count += 1
+            
+            session.commit()
+            
+            return {
+                "status": "success",
+                "content": [{"text": f"Reset {reset_count} entries"}],
+                "reset_count": reset_count,
+            }
+
 
 # Initialize RSS manager
 rss_manager = RSSManager()
@@ -481,6 +558,8 @@ def rss(
     auth_username: Optional[str] = None,
     auth_password: Optional[str] = None,
     headers: Optional[Dict[str, str]] = None,
+    entry_ids: Optional[List[int]] = None,
+    only_unprocessed: bool = True,
 ) -> Union[List[Dict], Dict]:
     """
     Interact with RSS feeds - fetch, subscribe, search, and manage feeds via Database.
@@ -490,11 +569,12 @@ def rss(
     - subscribe: Add a feed to your subscription list
     - unsubscribe: Remove a feed subscription
     - list: List all subscribed feeds (filtered by scout context if available)
-    - read: Read entries from a single subscribed feed
-    - read_all: Read entries from ALL subscribed feeds (convenient for gathering diverse content)
+    - read: Read entries from a single subscribed feed (by default only unprocessed)
+    - read_all: Read entries from ALL subscribed feeds (by default only unprocessed)
     - update: Update feeds with new content
     - search: Find entries matching a query
-    # - categories: List all categories/tags (Not implemented in DB version yet)
+    - mark_processed: Mark entries as processed/seen (requires entry_ids)
+    - reset_processed: Reset processed status for testing (optional feed_id)
 
     Args:
         action: Action to perform
@@ -504,6 +584,8 @@ def rss(
         include_content: Whether to include full content
         query: Search query
         category: Filter entries by category
+        entry_ids: List of entry IDs (for mark_processed action)
+        only_unprocessed: If True, read/read_all only returns unprocessed entries (default: True)
     """
     
     # Get scout_id from environment variable (set by ScoutManager)
@@ -562,7 +644,7 @@ def rss(
             if not feed_id:
                 return {"status": "error", "content": [{"text": "feed_id is required"}]}
             return rss_manager.read_feed(
-                int(feed_id), max_entries, category, include_content
+                int(feed_id), max_entries, category, include_content, only_unprocessed
             )
         
         elif action == "read_all":
@@ -570,7 +652,8 @@ def rss(
             return rss_manager.read_all_feeds(
                 scout_id=scout_id,
                 max_entries_per_feed=max_entries,
-                include_content=include_content
+                include_content=include_content,
+                only_unprocessed=only_unprocessed
             )
 
         elif action == "update":
@@ -586,6 +669,15 @@ def rss(
             if not query:
                 return {"status": "error", "content": [{"text": "query is required"}]}
             return rss_manager.search(query, max_entries, include_content)
+        
+        elif action == "mark_processed":
+            if not entry_ids:
+                return {"status": "error", "content": [{"text": "entry_ids is required"}]}
+            return rss_manager.mark_processed(entry_ids)
+        
+        elif action == "reset_processed":
+            # Optional feed_id to reset only specific feed
+            return rss_manager.reset_processed_status(int(feed_id) if feed_id else None)
 
         else:
             return {

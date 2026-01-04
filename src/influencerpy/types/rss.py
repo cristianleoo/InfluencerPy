@@ -34,6 +34,8 @@ class RSSEntryModel(SQLModel, table=True):
     summary: Optional[str] = None
     content: Optional[str] = None
     categories_json: Optional[str] = None # JSON list of categories
+    is_processed: bool = Field(default=False, index=True) # Track if entry has been presented to LLM
+    processed_at: Optional[datetime] = None # When the entry was marked as processed
     
     feed: RSSFeedModel = Relationship(back_populates="entries")
     created_at: datetime = Field(default_factory=datetime.utcnow)
