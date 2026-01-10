@@ -4,6 +4,8 @@ from strands import tool
 from typing import Dict
 import logging
 
+from influencerpy.core.embeddings import EmbeddingManager
+
 logger = logging.getLogger(__name__)
 
 @tool
@@ -76,6 +78,22 @@ def http_request(url: str, selector: str = None, extract_links: bool = False) ->
         max_length = 10000
         if len(content) > max_length:
             content = content[:max_length] + f"\n\n[Content truncated - original length: {len(content)} characters]"
+        
+        # Check for duplicates using embeddings (on content side)
+        embedding_manager = EmbeddingManager()
+        content_text = f"{title} {content}"
+        
+        if embedding_manager.is_similar(content_text):
+            logger.debug(f"Skipping duplicate HTTP content: {title} ({url})")
+            return {
+                "url": url,
+                "title": title,
+                "content": "[Content skipped - duplicate detected]",
+                "duplicate": True
+            }
+        
+        # Index the content to prevent future duplicates
+        embedding_manager.add_item(content_text, source_type="retrieved")
         
         result = {
             "url": url,

@@ -13,6 +13,7 @@ from strands import tool
 
 from influencerpy.database import get_session
 from influencerpy.types.rss import RSSEntryModel, RSSFeedModel
+from influencerpy.core.embeddings import EmbeddingManager
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -29,7 +30,9 @@ html_converter.body_width = 0
 
 
 class RSSManager:
-    """Manage RSS feed subscriptions, updates, and content retrieval via Database."""
+    """Manage RSS feed subscriptions, updates, and content retrieval via Database.
+    
+    Includes embedding-based duplicate detection to prevent returning the same content."""
 
     def __init__(self):
         pass
@@ -232,7 +235,7 @@ class RSSManager:
                 session.add(feed)
 
                 # Process entries
-                new_count = 0
+                new_entries_list = []
                 total_count = 0
 
                 # Get existing entry IDs to avoid duplicates
@@ -253,12 +256,6 @@ class RSSManager:
                             entry_id=entry_id,
                             title=formatted["title"],
                             link=formatted["link"],
-                            # published logic... feedparser parses dates to structs, we might need conversion
-                            # simplified for now using string or raw if compatible, otherwise datetime conversion needed
-                            # format_entry returns string for published.
-                            # Let's assume format_entry returns something we can use or adapt.
-                            # format_entry returns "Unknown date" if missing.
-                            # Models expect datetime. We should try to parse or use current time if fail.
                             author=formatted["author"],
                             summary=entry.get("summary", ""),
                             content=formatted.get("content", ""),
@@ -266,9 +263,8 @@ class RSSManager:
                             created_at=datetime.utcnow(),
                         )
 
-                        # Handle date parsing if needed
+                        # Handle date parsing
                         try:
-                            # feedparser often gives struct_time in 'published_parsed'
                             if (
                                 hasattr(entry, "published_parsed")
                                 and entry.published_parsed
@@ -282,7 +278,19 @@ class RSSManager:
                             new_entry.published = datetime.utcnow()
 
                         session.add(new_entry)
-                        new_count += 1
+                        
+                        # Add to return list
+                        entry_dict = {
+                            "id": entry_id, # return the feed's ID for the entry
+                            "title": formatted["title"],
+                            "link": formatted["link"],
+                            "published": str(new_entry.published),
+                            "author": formatted["author"],
+                            "summary": new_entry.summary,
+                            "categories": formatted.get("categories", []),
+                            "content": new_entry.content
+                        }
+                        new_entries_list.append(entry_dict)
 
                     total_count += 1
 
@@ -291,8 +299,9 @@ class RSSManager:
                 return {
                     "feed_id": str(feed_id),
                     "title": feed.title,
-                    "new_entries": new_count,
+                    "new_entries_count": len(new_entries_list),
                     "total_entries": total_count,
+                    "entries": new_entries_list
                 }
 
             except Exception as e:
@@ -330,7 +339,10 @@ class RSSManager:
             query = query.order_by(RSSEntryModel.published.desc())
             entries = session.exec(query).all()
 
-            # Filter by category in python (JSON storage)
+            # Initialize embedding manager for duplicate detection
+            embedding_manager = EmbeddingManager()
+
+            # Filter by category and check embeddings in python
             filtered_entries = []
             for entry in entries:
                 if category:
@@ -341,6 +353,12 @@ class RSSManager:
                     )
                     if not any(category.lower() == c.lower() for c in cats):
                         continue
+
+                # Check for duplicates using embeddings (on content side)
+                content_text = f"{entry.title} {entry.summary or ''}"
+                if embedding_manager.is_similar(content_text):
+                    logger.debug(f"Skipping duplicate RSS entry: {entry.title}")
+                    continue
 
                 entry_dict = {
                     "id": entry.id,  # Include entry ID for marking as processed
@@ -358,6 +376,9 @@ class RSSManager:
                 if include_content:
                     entry_dict["content"] = entry.content
 
+                # Index the content to prevent future duplicates
+                embedding_manager.add_item(content_text, source_type="retrieved")
+
                 filtered_entries.append(entry_dict)
                 if len(filtered_entries) >= max_entries:
                     break
@@ -367,7 +388,7 @@ class RSSManager:
                 "title": feed.title,
                 "entries": filtered_entries,
             }
-    
+
     def read_all_feeds(
         self,
         scout_id: Optional[int] = None,
@@ -376,18 +397,20 @@ class RSSManager:
         only_unprocessed: bool = True,
     ) -> List[Dict]:
         """
-        Read entries from ALL subscribed feeds (optionally filtered by scout_id).
-        Returns a list of feed results, each containing entries from that feed.
+        Fetch updates from ALL subscribed feeds and return the NEW entries.
         
         Args:
             scout_id: Optional scout ID to filter feeds
-            max_entries_per_feed: Maximum entries to return per feed
-            include_content: Whether to include full content
-            only_unprocessed: If True, only return entries not yet presented to LLM
+            max_entries_per_feed: Ignored for now as we return all NEW entries from the update
+            include_content: Whether to include full content (default True in update_feed but checked here)
+            only_unprocessed: Ignored, as we fundamentally return "new" entries which are naturally unprocessed
             
         Returns:
-            List of dicts, each with feed info and its entries
+            List of dicts, each with feed info and its NEW entries
         """
+        # Initialize embedding manager for duplicate detection on the result
+        embedding_manager = EmbeddingManager()
+        
         with next(get_session()) as session:
             query = select(RSSFeedModel)
             if scout_id is not None:
@@ -397,48 +420,39 @@ class RSSManager:
             results = []
             
             for feed in feeds:
-                # Get entries for this feed
-                entry_query = (
-                    select(RSSEntryModel)
-                    .where(RSSEntryModel.feed_id == feed.id)
-                )
+                # Update the feed and get new entries
+                update_result = self.update_feed(feed.id)
                 
-                # Filter for unprocessed entries by default
-                if only_unprocessed:
-                    entry_query = entry_query.where(RSSEntryModel.is_processed == False)
-                
-                entry_query = entry_query.order_by(RSSEntryModel.published.desc()).limit(max_entries_per_feed)
-                entries = session.exec(entry_query).all()
-                
-                # Format entries
-                formatted_entries = []
-                for entry in entries:
-                    entry_dict = {
-                        "id": entry.id,  # Include entry ID for marking as processed
-                        "title": entry.title,
-                        "link": entry.link,
-                        "published": str(entry.published),
-                        "author": entry.author,
-                        "summary": entry.summary,
-                        "categories": (
-                            json.loads(entry.categories_json)
-                            if entry.categories_json
-                            else []
-                        ),
-                    }
-                    if include_content:
-                        entry_dict["content"] = entry.content
-                    formatted_entries.append(entry_dict)
-                
-                # Only add feed result if it has entries
-                if formatted_entries:
-                    results.append({
-                        "feed_id": str(feed.id),
-                        "feed_title": feed.title,
-                        "feed_url": feed.url,
-                        "entry_count": len(formatted_entries),
-                        "entries": formatted_entries,
-                    })
+                if "entries" in update_result and update_result["entries"]:
+                    new_entries = update_result["entries"]
+                    
+                    # Filter/Format entries
+                    formatted_entries = []
+                    for entry in new_entries:
+                        # Check for duplicates using embeddings (on content side)
+                        # Even though they are "new" to the DB, they might be semantically similar to others
+                        content_text = f"{entry['title']} {entry['summary'] or ''}"
+                        if embedding_manager.is_similar(content_text):
+                            logger.debug(f"Skipping duplicate newly fetched RSS entry: {entry['title']}")
+                            continue
+                        
+                        # Apply include_content filter
+                        if not include_content:
+                            entry.pop("content", None)
+                        
+                        # Index the content 
+                        embedding_manager.add_item(content_text, source_type="retrieved")
+                        
+                        formatted_entries.append(entry)
+                    
+                    if formatted_entries:
+                        results.append({
+                            "feed_id": str(feed.id),
+                            "feed_title": feed.title,
+                            "feed_url": feed.url,
+                            "entry_count": len(formatted_entries),
+                            "entries": formatted_entries,
+                        })
             
             return results
 
@@ -607,10 +621,26 @@ def rss(
                     "content": [{"text": "Could not parse feed"}],
                 }
 
-            entries = [
-                rss_manager.format_entry(entry, include_content)
-                for entry in feed.entries[:max_entries]
-            ]
+            # Initialize embedding manager for duplicate detection
+            embedding_manager = EmbeddingManager()
+            
+            # Filter entries using embeddings
+            entries = []
+            for entry in feed.entries[:max_entries]:
+                formatted = rss_manager.format_entry(entry, include_content)
+                
+                # Check for duplicates using embeddings (on content side)
+                content_text = f"{formatted.get('title', '')} {formatted.get('summary', '')}"
+                if content_text.strip() and embedding_manager.is_similar(content_text):
+                    logger.debug(f"Skipping duplicate RSS entry: {formatted.get('title', 'Unknown')}")
+                    continue
+                
+                # Index the content to prevent future duplicates
+                if content_text.strip():
+                    embedding_manager.add_item(content_text, source_type="retrieved")
+                
+                entries.append(formatted)
+            
             return entries
 
         elif action == "subscribe":
