@@ -54,21 +54,7 @@ Available action types:
 
 ### File: `src/influencerpy/core/scouts.py`
 
-```python
-# Lines 149-194
-if "browser" in tools_config:
-    browser = LocalChromiumBrowser()
-    
-    def browser_wrapper(browser_input, agent=None, event_loop_cycle_id=None, **kwargs):
-        # Wrapper logic to handle Strands' argument injection
-        ...
-    
-    agent_tools.append(PythonAgentTool(
-        tool_name=browser.browser.tool_spec['name'],
-        tool_spec=browser.browser.tool_spec,
-        tool_func=browser_wrapper
-    ))
-```
+
 
 ### File: `src/influencerpy/main.py`
 
@@ -108,9 +94,7 @@ tool_use={'action': {'type': 'click', 'selector': '...'}}
 ## Testing
 
 Run verification script:
-```bash
-python3 test_huggingface_papers.py
-```
+
 
 Expected behavior:
 - ✅ Navigate to URL

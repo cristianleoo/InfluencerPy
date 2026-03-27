@@ -70,26 +70,7 @@ InfluencerPy uses a **structured system prompt architecture** that separates con
 
 When a scout runs, the system builds the final prompt using the `SystemPrompt` dataclass:
 
-```python
-from influencerpy.core.prompts import SystemPrompt
-from influencerpy.types.prompts import (
-    GENERAL_GUARDRAILS,
-    build_tool_prompt,
-    get_platform_instructions
-)
 
-system_prompt = SystemPrompt(
-    general_instructions=GENERAL_GUARDRAILS,
-    tool_instructions=build_tool_prompt(["rss", "google_search"]),
-    platform_instructions=get_platform_instructions("x"),
-    user_instructions="Find trending AI news"
-)
-
-final_prompt = system_prompt.build(
-    date="2025-11-28",
-    limit=10
-)
-```
 
 ### Example Output
 
@@ -156,13 +137,7 @@ To add a new platform (e.g., Instagram):
 
 1. Edit `src/influencerpy.types.prompts.py`
 2. Add to `PLATFORM_INSTRUCTIONS` dictionary:
-   ```python
-   "instagram": """OUTPUT FORMAT FOR INSTAGRAM:
-   - Visually-driven content
-   - Up to 2200 characters
-   - Use emojis liberally
-   - Hashtags at the end (up to 30)"""
-   ```
+
 
 3. No other code changes needed!
 

@@ -1,5 +1,6 @@
 import base64
 import os
+import warnings
 import logging
 from typing import Optional
 
@@ -34,6 +35,11 @@ def setup_langfuse() -> bool:
     # Initialize Strands OTLP exporter
     try:
         from strands.telemetry import StrandsTelemetry
+        
+        # Suppress OpenTelemetry TracerProvider warnings
+        logging.getLogger('opentelemetry.trace').setLevel(logging.ERROR)
+        warnings.filterwarnings('ignore', message='.*TracerProvider.*')
+        
         # Check if already initialized or suppress the error if re-initialization isn't supported cleanly
         # The error "Overriding of current TracerProvider is not allowed" suggests global state is already set.
         # We can wrap this in a broader try/catch to ignore if it's already set.

@@ -45,6 +45,77 @@ class ScoutModel(SQLModel, table=True):
     last_run: Optional[datetime] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
+
+class ScoutNodeModel(SQLModel, table=True):
+    """Reusable listening/source node."""
+    __tablename__ = "scout_nodes"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    type: str
+    config_json: str
+    schedule_cron: Optional[str] = None
+    last_run: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AgentNodeModel(SQLModel, table=True):
+    """Reusable transform/generation node."""
+    __tablename__ = "agent_nodes"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    intent: str = Field(default="scouting")
+    prompt_template: Optional[str] = None
+    config_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ChannelNodeModel(SQLModel, table=True):
+    """Reusable output/delivery node."""
+    __tablename__ = "channel_nodes"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    platforms: str = Field(default="[]")
+    telegram_review: bool = Field(default=False)
+    config_json: str = Field(default="{}")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FlowModel(SQLModel, table=True):
+    """Workflow linking scout, agent, and channel nodes."""
+    __tablename__ = "flows"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = Field(unique=True)
+    scout_node_id: int = Field(foreign_key="scout_nodes.id")
+    agent_node_id: int = Field(foreign_key="agent_nodes.id")
+    channel_node_id: int = Field(foreign_key="channel_nodes.id")
+    legacy_scout_id: Optional[int] = Field(default=None, foreign_key="scouts.id")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FlowScoutLinkModel(SQLModel, table=True):
+    """Links multiple scout nodes into one flow."""
+    __tablename__ = "flow_scout_links"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    flow_id: int = Field(foreign_key="flows.id")
+    scout_node_id: int = Field(foreign_key="scout_nodes.id")
+    position: int = Field(default=0)
+
+
+class FlowChannelLinkModel(SQLModel, table=True):
+    """Links multiple channel nodes into one flow."""
+    __tablename__ = "flow_channel_links"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    flow_id: int = Field(foreign_key="flows.id")
+    channel_node_id: int = Field(foreign_key="channel_nodes.id")
+    position: int = Field(default=0)
+
 class ScoutFeedbackModel(SQLModel, table=True):
     """Database model for user feedback on Scout results."""
     __tablename__ = "scout_feedback"
@@ -78,4 +149,3 @@ class ContentEmbedding(SQLModel, table=True):
     embedding_json: str  # Stored as JSON string of floats
     source_type: str  # 'retrieved' or 'generated'
     created_at: datetime = Field(default_factory=datetime.utcnow)
-

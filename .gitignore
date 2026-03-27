@@ -213,3 +213,5 @@ __marimo__/
 example/
 uv.lock
 bot.pid
+frontend/.next/
+frontend/node_modules/

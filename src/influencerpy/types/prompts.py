@@ -38,6 +38,11 @@ Do NOT try to fetch from URLs directly unless explicitly instructed.""",
 Use this to browse posts from specified subreddits.
 You can control the sort parameter: "hot" (trending), "new" (most recent), "top" (highest rated), or "rising" (gaining momentum).
 Look for highly upvoted, recent, and engaging discussions.""",
+
+    "substack": """TOOL: substack
+Use this to fetch posts from a specific Substack newsletter.
+Provide the newsletter URL and choose whether to sort by "new" or "top".
+Best for: Following one publication closely and surfacing notable recent essays.""",
     
     "arxiv": """TOOL: arxiv
 Use this to search academic research papers.

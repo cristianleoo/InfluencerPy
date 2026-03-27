@@ -20,6 +20,8 @@ dependencies = [
   "rich",
   "sqlmodel",
   "requests",
+  "fastapi",
+  "uvicorn[standard]",
   "google-generativeai",
   "questionary",
   "pyfiglet",

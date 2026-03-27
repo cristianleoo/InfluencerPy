@@ -26,6 +26,7 @@ class TelegramChannel(BaseChannel):
         self.application = None
         self.scout_manager = ScoutManager()
         self.waiting_for_feedback = {} # {user_id: post_id}
+        self._checking_posts_lock = asyncio.Lock()  # Prevent overlapping check_pending_posts executions
     
     @staticmethod
     def _escape_markdown(text: str) -> str:
@@ -191,8 +192,13 @@ class TelegramChannel(BaseChannel):
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
 
         # Job queue to check for posts every minute
+        # Note: Overlapping executions are prevented by _checking_posts_lock in check_pending_posts()
         if self.application.job_queue:
-            self.application.job_queue.run_repeating(self.check_pending_posts, interval=60, first=10)
+            self.application.job_queue.run_repeating(
+                self.check_pending_posts, 
+                interval=60, 
+                first=10
+            )
 
         from telegram.error import Conflict
 
@@ -313,56 +319,65 @@ class TelegramChannel(BaseChannel):
 
     async def check_pending_posts(self, context: ContextTypes.DEFAULT_TYPE):
         """Check DB for posts with status 'pending_review'."""
-        # Note: This method is called by the job queue, so 'self' is available if bound correctly,
-        # but context is passed by python-telegram-bot.
+        # Prevent overlapping executions
+        if self._checking_posts_lock.locked():
+            logger.debug("check_pending_posts already running, skipping this execution")
+            return 0
         
-        # We need to access the bot instance from context if we are in a job
-        bot = context.bot
-        chat_id = self.chat_id
+        async with self._checking_posts_lock:
+            try:
+                # Note: This method is called by the job queue, so 'self' is available if bound correctly,
+                # but context is passed by python-telegram-bot.
 
-        if not chat_id:
-             return
+                # We need to access the bot instance from context if we are in a job
+                chat_id = self.chat_id
 
-        with next(get_session()) as session:
-            statement = select(PostModel).where(PostModel.status == "pending_review")
-            posts = session.exec(statement).all()
-            
-            for post in posts:
-                # Send to Telegram
-                keyboard = [
-                    [
-                        InlineKeyboardButton("✅ Confirm", callback_data=f"confirm_{post.id}"),
-                        InlineKeyboardButton("❌ Reject", callback_data=f"reject_{post.id}"),
-                    ],
-                    [
-                        InlineKeyboardButton("💬 Feedback / Edit", callback_data=f"feedback_{post.id}"),
-                    ]
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                
-                # Send using split method
-                chunks = self._split_message(f"📝 **Review Draft**\n\n{post.content}\n\nPlatform: {post.platform}")
-                for i, chunk in enumerate(chunks):
-                    is_last = (i == len(chunks) - 1)
+                if not chat_id:
+                    return 0
+
+                with next(get_session()) as session:
+                    statement = select(PostModel).where(PostModel.status == "pending_review")
+                    posts = session.exec(statement).all()
                     
-                    # Only add reply_markup to the last message
-                    if len(chunks) > 1:
-                        part_text = f"[Part {i+1}/{len(chunks)}]\n\n{chunk}"
-                    else:
-                        part_text = chunk
+                    if not posts:
+                        return 0
                     
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=part_text,
-                        reply_markup=reply_markup if is_last else None
-                    )
-                
-                # Update status to 'reviewing' to avoid re-sending
-                post.status = "reviewing"
-                session.add(post)
-                session.commit()
-            
-            return len(posts)
+                    logger.info(f"Found {len(posts)} pending post(s) to review")
+                    
+                    for post in posts:
+                        try:
+                            # Send to Telegram
+                            keyboard = [
+                                [
+                                    InlineKeyboardButton("✅ Confirm", callback_data=f"confirm_{post.id}"),
+                                    InlineKeyboardButton("❌ Reject", callback_data=f"reject_{post.id}"),
+                                ],
+                                [
+                                    InlineKeyboardButton("💬 Feedback / Edit", callback_data=f"feedback_{post.id}"),
+                                ]
+                            ]
+                            reply_markup = InlineKeyboardMarkup(keyboard)
+
+                            await self._send_message_split(
+                                chat_id=chat_id,
+                                text=f"📝 **Review Draft**\n\n{post.content}\n\nPlatform: {post.platform}",
+                                reply_markup=reply_markup,
+                                parse_mode="Markdown"
+                            )
+                            
+                            # Update status to 'reviewing' to avoid re-sending
+                            post.status = "reviewing"
+                            session.add(post)
+                            session.commit()
+                        except Exception as e:
+                            logger.error(f"Error processing post {post.id}: {e}", exc_info=True)
+                            # Continue with next post even if one fails
+                            continue
+                    
+                    return len(posts)
+            except Exception as e:
+                logger.error(f"Error in check_pending_posts: {e}", exc_info=True)
+                return 0
 
     async def _button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle button clicks."""

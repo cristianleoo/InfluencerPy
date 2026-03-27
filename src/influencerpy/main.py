@@ -1679,6 +1679,27 @@ def dashboard():
 
 
 @app.command()
+def web(
+    backend_port: int = typer.Option(8000, help="Dashboard API port"),
+    frontend_port: int = typer.Option(3000, help="Dashboard UI port"),
+    no_browser: bool = typer.Option(False, help="Do not open the browser automatically"),
+):
+    """Run the web dashboard stack."""
+    from influencerpy.web.launcher import launch_dashboard_stack
+
+    create_db_and_tables()
+    config_manager = ConfigManager()
+    if not config_manager.exists():
+        config_manager.ensure_config_exists()
+
+    launch_dashboard_stack(
+        backend_port=backend_port,
+        frontend_port=frontend_port,
+        open_browser=not no_browser,
+    )
+
+
+@app.command()
 def news(limit: int = typer.Option(5, help="Number of news items to fetch")):
     """Fetch and display latest AI news."""
     feeds = [
@@ -2616,6 +2637,17 @@ def main(ctx: typer.Context):
     Premium Social Media Automation CLI.
     """
     if ctx.invoked_subcommand is None:
+        if os.getenv("INFLUENCERPY_TERMINAL") != "1":
+            from influencerpy.web.launcher import launch_dashboard_stack
+
+            create_db_and_tables()
+            config_manager = ConfigManager()
+            if not config_manager.exists():
+                config_manager.ensure_config_exists()
+
+            launch_dashboard_stack()
+            return
+
         # Initialization with Loader
         with console.status("[bold green]Initializing InfluencerPy...[/bold green]", spinner="dots"):
             # Ensure DB is ready

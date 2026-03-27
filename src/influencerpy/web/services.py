@@ -1,0 +1,1360 @@
+import json
+import os
+from datetime import datetime
+from typing import Any
+
+from dotenv import load_dotenv, set_key
+import requests
+from sqlmodel import func, select
+
+from influencerpy.config import CONFIG_FILE, ENV_FILE, ConfigManager
+from influencerpy.core.scouts import ScoutManager
+from influencerpy.database import get_session
+from influencerpy.logger import LOGS_DIR
+from influencerpy.platforms.substack_platform import SubstackProvider
+from influencerpy.platforms.x_platform import XProvider
+from influencerpy.tools.rss import RSSManager
+from influencerpy.types.models import ContentItem
+from influencerpy.types.rss import RSSFeedModel, RSSEntryModel
+from influencerpy.types.schema import (
+    AgentNodeModel,
+    ChannelNodeModel,
+    FlowChannelLinkModel,
+    FlowModel,
+    FlowScoutLinkModel,
+    PostModel,
+    ScoutModel,
+    ScoutCalibrationModel,
+    ScoutFeedbackModel,
+    ScoutNodeModel,
+)
+from influencerpy.web.runtime import is_bot_running
+
+SCOUT_TYPE_TOOL_DEFAULTS: dict[str, list[str]] = {
+    "search": ["google_search"],
+    "rss": ["rss"],
+    "reddit": ["reddit"],
+    "substack": ["substack"],
+    "browser": ["browser"],
+    "arxiv": ["arxiv"],
+}
+
+SCOUT_TOOL_CATALOG: list[dict[str, Any]] = [
+    {
+        "id": "google_search",
+        "label": "Google Search",
+        "description": "Search the web for recent articles, launches, and news.",
+        "recommended_for": ["search"],
+    },
+    {
+        "id": "rss",
+        "label": "RSS",
+        "description": "Read subscribed feeds and scan multiple sources quickly.",
+        "recommended_for": ["rss"],
+    },
+    {
+        "id": "reddit",
+        "label": "Reddit",
+        "description": "Browse subreddit threads and surface discussions with traction.",
+        "recommended_for": ["reddit"],
+    },
+    {
+        "id": "substack",
+        "label": "Substack",
+        "description": "Pull posts from a specific Substack newsletter.",
+        "recommended_for": ["substack"],
+    },
+    {
+        "id": "browser",
+        "label": "Browser",
+        "description": "Open a page and navigate it when static fetches are not enough.",
+        "recommended_for": ["browser"],
+    },
+    {
+        "id": "http_request",
+        "label": "HTTP Request",
+        "description": "Fetch and extract article text directly from URLs.",
+        "recommended_for": ["search", "browser", "substack"],
+    },
+    {
+        "id": "arxiv",
+        "label": "Arxiv",
+        "description": "Search research papers and technical publications.",
+        "recommended_for": ["arxiv"],
+    },
+]
+
+
+def _safe_json_loads(raw: str | None, fallback: Any) -> Any:
+    if not raw:
+        return fallback
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return fallback
+
+
+def serialize_post(post: PostModel, scout_name: str | None = None) -> dict[str, Any]:
+    return {
+        "id": post.id,
+        "content": post.content,
+        "platform": post.platform,
+        "status": post.status,
+        "scheduled_time": post.scheduled_time.isoformat() if post.scheduled_time else None,
+        "created_at": post.created_at.isoformat() if post.created_at else None,
+        "posted_at": post.posted_at.isoformat() if post.posted_at else None,
+        "external_id": post.external_id,
+        "scout_id": post.scout_id,
+        "scout_name": scout_name,
+    }
+
+
+def serialize_scout(scout: ScoutModel) -> dict[str, Any]:
+    config = _safe_json_loads(scout.config_json, {})
+    return {
+        "id": scout.id,
+        "name": scout.name,
+        "type": scout.type,
+        "intent": scout.intent,
+        "schedule_cron": scout.schedule_cron,
+        "last_run": scout.last_run.isoformat() if scout.last_run else None,
+        "created_at": scout.created_at.isoformat() if scout.created_at else None,
+        "telegram_review": scout.telegram_review,
+        "platforms": _safe_json_loads(scout.platforms, []),
+        "config": config,
+    }
+
+
+def serialize_scout_node(node: ScoutNodeModel) -> dict[str, Any]:
+    config = _safe_json_loads(node.config_json, {})
+    return {
+        "id": node.id,
+        "name": node.name,
+        "type": node.type,
+        "schedule_cron": node.schedule_cron,
+        "last_run": node.last_run.isoformat() if node.last_run else None,
+        "created_at": node.created_at.isoformat() if node.created_at else None,
+        "config": config,
+    }
+
+
+def serialize_agent_node(node: AgentNodeModel) -> dict[str, Any]:
+    config = _safe_json_loads(node.config_json, {})
+    return {
+        "id": node.id,
+        "name": node.name,
+        "intent": node.intent,
+        "prompt_template": node.prompt_template,
+        "created_at": node.created_at.isoformat() if node.created_at else None,
+        "config": config,
+    }
+
+
+def serialize_channel_node(node: ChannelNodeModel) -> dict[str, Any]:
+    config = _safe_json_loads(node.config_json, {})
+    return {
+        "id": node.id,
+        "name": node.name,
+        "platforms": _safe_json_loads(node.platforms, []),
+        "telegram_review": node.telegram_review,
+        "created_at": node.created_at.isoformat() if node.created_at else None,
+        "config": config,
+    }
+
+
+def _serialize_flow(
+    flow: FlowModel,
+    scout_nodes: list[ScoutNodeModel],
+    agent_node: AgentNodeModel,
+    channel_nodes: list[ChannelNodeModel],
+) -> dict[str, Any]:
+    primary_scout = scout_nodes[0]
+    primary_channel = channel_nodes[0]
+    scout_config = _safe_json_loads(primary_scout.config_json, {})
+    agent_config = _safe_json_loads(agent_node.config_json, {})
+    channel_platforms = sorted(
+        {
+            platform
+            for node in channel_nodes
+            for platform in _safe_json_loads(node.platforms, [])
+        }
+    )
+    config = {
+        **scout_config,
+        **agent_config,
+    }
+    return {
+        "id": flow.id,
+        "name": flow.name,
+        "type": primary_scout.type,
+        "intent": agent_node.intent,
+        "schedule_cron": primary_scout.schedule_cron,
+        "last_run": primary_scout.last_run.isoformat() if primary_scout.last_run else None,
+        "created_at": flow.created_at.isoformat() if flow.created_at else None,
+        "telegram_review": any(node.telegram_review for node in channel_nodes),
+        "platforms": channel_platforms,
+        "config": config,
+        "flow": {
+            "id": flow.id,
+            "legacy_scout_id": flow.legacy_scout_id,
+            "updated_at": flow.updated_at.isoformat() if flow.updated_at else None,
+        },
+        "nodes": {
+            "scout": serialize_scout_node(primary_scout),
+            "scouts": [serialize_scout_node(node) for node in scout_nodes],
+            "agent": serialize_agent_node(agent_node),
+            "channel": serialize_channel_node(primary_channel),
+            "channels": [serialize_channel_node(node) for node in channel_nodes],
+        },
+    }
+
+
+def _build_flow_name_map(session) -> dict[int, str]:
+    flows = session.exec(select(FlowModel)).all()
+    return {
+        flow.legacy_scout_id: flow.name
+        for flow in flows
+        if flow.legacy_scout_id is not None
+    }
+
+
+def _get_flow_scout_nodes(session, flow_ids: list[int]) -> dict[int, list[ScoutNodeModel]]:
+    if not flow_ids:
+        return {}
+    links = session.exec(
+        select(FlowScoutLinkModel).where(FlowScoutLinkModel.flow_id.in_(flow_ids))
+    ).all()
+    scout_nodes = {
+        node.id: node
+        for node in session.exec(select(ScoutNodeModel)).all()
+        if node.id is not None
+    }
+    grouped: dict[int, list[tuple[int, ScoutNodeModel]]] = {}
+    for link in links:
+        node = scout_nodes.get(link.scout_node_id)
+        if not node:
+            continue
+        grouped.setdefault(link.flow_id, []).append((link.position, node))
+    return {
+        flow_id: [node for _, node in sorted(entries, key=lambda item: item[0])]
+        for flow_id, entries in grouped.items()
+    }
+
+
+def _get_flow_channel_nodes(session, flow_ids: list[int]) -> dict[int, list[ChannelNodeModel]]:
+    if not flow_ids:
+        return {}
+    links = session.exec(
+        select(FlowChannelLinkModel).where(FlowChannelLinkModel.flow_id.in_(flow_ids))
+    ).all()
+    channel_nodes = {
+        node.id: node
+        for node in session.exec(select(ChannelNodeModel)).all()
+        if node.id is not None
+    }
+    grouped: dict[int, list[tuple[int, ChannelNodeModel]]] = {}
+    for link in links:
+        node = channel_nodes.get(link.channel_node_id)
+        if not node:
+            continue
+        grouped.setdefault(link.flow_id, []).append((link.position, node))
+    return {
+        flow_id: [node for _, node in sorted(entries, key=lambda item: item[0])]
+        for flow_id, entries in grouped.items()
+    }
+
+
+def get_dashboard_snapshot() -> dict[str, Any]:
+    with next(get_session()) as session:
+        flows = session.exec(select(FlowModel).order_by(FlowModel.created_at.desc())).all()
+        flow_scout_nodes = _get_flow_scout_nodes(session, [flow.id for flow in flows if flow.id is not None])
+        flow_channel_nodes = _get_flow_channel_nodes(session, [flow.id for flow in flows if flow.id is not None])
+        agent_nodes = {
+            node.id: node for node in session.exec(select(AgentNodeModel)).all() if node.id is not None
+        }
+        scout_names = _build_flow_name_map(session)
+
+        recent_posts = session.exec(
+            select(PostModel).order_by(PostModel.created_at.desc()).limit(10)
+        ).all()
+        pending_posts = session.exec(
+            select(PostModel)
+            .where(PostModel.status.in_(("pending_review", "reviewing")))
+            .order_by(PostModel.created_at.desc())
+            .limit(8)
+        ).all()
+
+        rss_feed_count = session.exec(select(func.count()).select_from(RSSFeedModel)).one()
+        rss_entry_count = session.exec(select(func.count()).select_from(RSSEntryModel)).one()
+        processed_entry_count = session.exec(
+            select(func.count()).select_from(RSSEntryModel).where(RSSEntryModel.is_processed)
+        ).one()
+
+        post_status_counts = dict(
+            session.exec(select(PostModel.status, func.count()).group_by(PostModel.status)).all()
+        )
+
+        return {
+            "system": {
+                "bot_running": is_bot_running(),
+                "updated_at": datetime.utcnow().isoformat(),
+            },
+            "stats": {
+                "scouts_total": len(flows),
+                "scheduled_scouts": len(
+                    [
+                        flow
+                        for flow in flows
+                        if flow.id in flow_scout_nodes
+                        and flow_scout_nodes[flow.id]
+                        and flow_scout_nodes[flow.id][0].schedule_cron
+                    ]
+                ),
+                "posts_total": sum(post_status_counts.values()),
+                "posts_by_status": post_status_counts,
+                "pending_reviews": len(pending_posts),
+                "rss_feeds": rss_feed_count,
+                "rss_entries": rss_entry_count,
+                "rss_processed_entries": processed_entry_count,
+            },
+            "scouts": [
+                _serialize_flow(
+                    flow,
+                    flow_scout_nodes[flow.id],
+                    agent_nodes[flow.agent_node_id],
+                    flow_channel_nodes[flow.id],
+                )
+                for flow in flows
+                if flow.id in flow_scout_nodes
+                and flow.id in flow_channel_nodes
+                and flow_scout_nodes[flow.id]
+                and flow_channel_nodes[flow.id]
+                and flow.agent_node_id in agent_nodes
+            ],
+            "recent_posts": [
+                serialize_post(post, scout_names.get(post.scout_id)) for post in recent_posts
+            ],
+            "pending_posts": [
+                serialize_post(post, scout_names.get(post.scout_id)) for post in pending_posts
+            ],
+        }
+
+
+def list_posts(status: str | None = None, limit: int = 25) -> list[dict[str, Any]]:
+    with next(get_session()) as session:
+        statement = select(PostModel).order_by(PostModel.created_at.desc())
+        if status:
+            statement = statement.where(PostModel.status == status)
+
+        scout_names = _build_flow_name_map(session)
+        posts = session.exec(statement.limit(limit)).all()
+        return [serialize_post(post, scout_names.get(post.scout_id)) for post in posts]
+
+
+def search_posts(query: str = "", status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
+    posts = list_posts(status=status, limit=max(limit, 250))
+    if not query.strip():
+        return posts[:limit]
+
+    needle = query.lower()
+    return [
+        post
+        for post in posts
+        if needle in (post["content"] or "").lower()
+        or needle in (post["platform"] or "").lower()
+        or needle in (post["status"] or "").lower()
+        or needle in (post["scout_name"] or "").lower()
+    ][:limit]
+
+
+def list_scouts() -> list[dict[str, Any]]:
+    with next(get_session()) as session:
+        flows = session.exec(select(FlowModel).order_by(FlowModel.created_at.desc())).all()
+        flow_scout_nodes = _get_flow_scout_nodes(session, [flow.id for flow in flows if flow.id is not None])
+        flow_channel_nodes = _get_flow_channel_nodes(session, [flow.id for flow in flows if flow.id is not None])
+        agent_nodes = {
+            node.id: node for node in session.exec(select(AgentNodeModel)).all() if node.id is not None
+        }
+        return [
+            _serialize_flow(
+                flow,
+                flow_scout_nodes[flow.id],
+                agent_nodes[flow.agent_node_id],
+                flow_channel_nodes[flow.id],
+            )
+            for flow in flows
+            if flow.id in flow_scout_nodes
+            and flow.id in flow_channel_nodes
+            and flow_scout_nodes[flow.id]
+            and flow_channel_nodes[flow.id]
+            and flow.agent_node_id in agent_nodes
+        ]
+
+
+def _build_scout_config(payload: dict[str, Any]) -> dict[str, Any]:
+    scout_type = payload["type"]
+    config: dict[str, Any] = {}
+    base_tools = SCOUT_TYPE_TOOL_DEFAULTS.get(scout_type, [])
+    tools = base_tools[:1]
+
+    if scout_type == "search":
+        config["query"] = payload.get("query", "")
+    elif scout_type == "rss":
+        feeds = [item.strip() for item in payload.get("feeds", []) if item.strip()]
+        config["feeds"] = feeds
+    elif scout_type == "reddit":
+        subreddits = [item.strip() for item in payload.get("subreddits", []) if item.strip()]
+        config["subreddits"] = subreddits
+        config["reddit_sort"] = payload.get("reddit_sort", "hot")
+    elif scout_type == "substack":
+        config["newsletter_url"] = payload.get("newsletter_url", "")
+        config["substack_sort"] = payload.get("substack_sort", "new")
+    elif scout_type == "browser":
+        config["url"] = payload.get("url", "")
+    elif scout_type == "arxiv":
+        config["query"] = payload.get("query", "")
+        if payload.get("date_filter"):
+            config["date_filter"] = payload["date_filter"]
+    else:
+        raise RuntimeError(f"Unsupported scout type '{scout_type}'")
+
+    config["tools"] = tools
+
+    return config
+
+
+def _build_agent_config(payload: dict[str, Any]) -> dict[str, Any]:
+    provider = payload.get("provider", "gemini")
+    model_id = payload.get("model_id")
+    temperature = payload.get("temperature")
+    config: dict[str, Any] = {
+        "flow_policy": payload.get("flow_policy", "pool"),
+        "generation_config": {
+            "provider": provider,
+            "model_id": model_id or "gemini-2.5-flash",
+            "temperature": float(temperature if temperature is not None else 0.7),
+        }
+    }
+    if payload.get("image_generation"):
+        config["image_generation"] = True
+    return config
+
+
+def _upsert_legacy_scout_for_flow(
+    session,
+    flow_name: str,
+    scout_node: ScoutNodeModel,
+    agent_node: AgentNodeModel,
+    channel_nodes: list[ChannelNodeModel],
+    legacy_scout: ScoutModel | None = None,
+) -> ScoutModel:
+    scout_config = _safe_json_loads(scout_node.config_json, {})
+    agent_config = _safe_json_loads(agent_node.config_json, {})
+    merged_config = {**scout_config, **agent_config}
+    merged_platforms = sorted(
+        {
+            platform
+            for channel_node in channel_nodes
+            for platform in _safe_json_loads(channel_node.platforms, [])
+        }
+    )
+    telegram_review = any(channel_node.telegram_review for channel_node in channel_nodes)
+
+    if legacy_scout is None:
+        legacy_scout = ScoutModel(
+            name=flow_name,
+            type=scout_node.type,
+            config_json=json.dumps(merged_config),
+            intent=agent_node.intent,
+            prompt_template=agent_node.prompt_template,
+            schedule_cron=scout_node.schedule_cron,
+            platforms=json.dumps(merged_platforms),
+            telegram_review=telegram_review,
+            last_run=scout_node.last_run,
+        )
+    else:
+        legacy_scout.name = flow_name
+        legacy_scout.type = scout_node.type
+        legacy_scout.config_json = json.dumps(merged_config)
+        legacy_scout.intent = agent_node.intent
+        legacy_scout.prompt_template = agent_node.prompt_template
+        legacy_scout.schedule_cron = scout_node.schedule_cron
+        legacy_scout.platforms = json.dumps(merged_platforms)
+        legacy_scout.telegram_review = telegram_review
+        legacy_scout.last_run = scout_node.last_run
+
+    session.add(legacy_scout)
+    session.flush()
+    return legacy_scout
+
+
+def _subscribe_rss_feeds_for_legacy_scout(legacy_scout_id: int | None, scout_node: ScoutNodeModel) -> None:
+    if legacy_scout_id is None:
+        return
+    config = _safe_json_loads(scout_node.config_json, {})
+    feeds = config.get("feeds", [])
+    if scout_node.type == "rss" and feeds:
+        rss_manager = RSSManager()
+        for feed_url in feeds:
+            rss_manager.subscribe(feed_url, scout_id=legacy_scout_id)
+
+
+def _subscribe_rss_feeds_for_flow(legacy_scout_id: int | None, scout_nodes: list[ScoutNodeModel]) -> None:
+    for scout_node in scout_nodes:
+        _subscribe_rss_feeds_for_legacy_scout(legacy_scout_id, scout_node)
+
+
+def _cleanup_preview_scout(manager: ScoutManager, scout_id: int | None) -> None:
+    if scout_id is None:
+        return
+    feeds = manager.session.exec(
+        select(RSSFeedModel).where(RSSFeedModel.scout_id == scout_id)
+    ).all()
+    for feed in feeds:
+        entries = manager.session.exec(
+            select(RSSEntryModel).where(RSSEntryModel.feed_id == feed.id)
+        ).all()
+        for entry in entries:
+            manager.session.delete(entry)
+        manager.session.delete(feed)
+    scout = manager.session.get(ScoutModel, scout_id)
+    if scout:
+        manager.session.delete(scout)
+    manager.session.commit()
+
+
+def _get_flow_bundle(session, flow_id: int) -> tuple[FlowModel, ScoutNodeModel, AgentNodeModel, ChannelNodeModel]:
+    flow = session.get(FlowModel, flow_id)
+    if not flow:
+        raise KeyError(f"Flow {flow_id} not found")
+    scout_node = session.get(ScoutNodeModel, flow.scout_node_id)
+    agent_node = session.get(AgentNodeModel, flow.agent_node_id)
+    channel_node = session.get(ChannelNodeModel, flow.channel_node_id)
+    if not scout_node or not agent_node or not channel_node:
+        raise RuntimeError(f"Flow {flow_id} has missing nodes")
+    return flow, scout_node, agent_node, channel_node
+
+
+def _sync_flow_scout_links(session, flow: FlowModel, scout_node_ids: list[int]) -> None:
+    existing_links = session.exec(
+        select(FlowScoutLinkModel).where(FlowScoutLinkModel.flow_id == flow.id)
+    ).all()
+    for link in existing_links:
+        session.delete(link)
+    session.flush()
+    for position, scout_node_id in enumerate(scout_node_ids):
+        session.add(
+            FlowScoutLinkModel(
+                flow_id=flow.id,
+                scout_node_id=scout_node_id,
+                position=position,
+            )
+        )
+
+
+def _sync_flow_channel_links(session, flow: FlowModel, channel_node_ids: list[int]) -> None:
+    existing_links = session.exec(
+        select(FlowChannelLinkModel).where(FlowChannelLinkModel.flow_id == flow.id)
+    ).all()
+    for link in existing_links:
+        session.delete(link)
+    session.flush()
+    for position, channel_node_id in enumerate(channel_node_ids):
+        session.add(
+            FlowChannelLinkModel(
+                flow_id=flow.id,
+                channel_node_id=channel_node_id,
+                position=position,
+            )
+        )
+
+
+def _extract_flow_scout_ids(payload: dict[str, Any], primary_scout_id: int | None = None) -> list[int]:
+    selected = [int(item) for item in payload.get("scout_node_ids", []) if item]
+    if payload.get("scout_node_id"):
+        selected.insert(0, int(payload["scout_node_id"]))
+    if primary_scout_id is not None:
+        selected.insert(0, int(primary_scout_id))
+    ordered_unique: list[int] = []
+    for value in selected:
+        if value not in ordered_unique:
+            ordered_unique.append(value)
+    return ordered_unique
+
+
+def _extract_flow_channel_ids(payload: dict[str, Any], primary_channel_id: int | None = None) -> list[int]:
+    selected = [int(item) for item in payload.get("channel_node_ids", []) if item]
+    if payload.get("channel_node_id"):
+        selected.insert(0, int(payload["channel_node_id"]))
+    if primary_channel_id is not None:
+        selected.insert(0, int(primary_channel_id))
+    ordered_unique: list[int] = []
+    for value in selected:
+        if value not in ordered_unique:
+            ordered_unique.append(value)
+    return ordered_unique
+
+
+def _apply_runtime_scout_config(
+    scout: ScoutModel,
+    flow_name: str,
+    scout_node: ScoutNodeModel,
+    agent_node: AgentNodeModel,
+    channel_nodes: list[ChannelNodeModel],
+    *,
+    runtime_name: str | None = None,
+) -> ScoutModel:
+    scout_config = _safe_json_loads(scout_node.config_json, {})
+    agent_config = _safe_json_loads(agent_node.config_json, {})
+    scout.name = runtime_name or flow_name
+    scout.type = scout_node.type
+    scout.config_json = json.dumps({**scout_config, **agent_config})
+    scout.intent = agent_node.intent
+    scout.prompt_template = agent_node.prompt_template
+    scout.schedule_cron = scout_node.schedule_cron
+    scout.platforms = json.dumps(
+        sorted(
+            {
+                platform
+                for channel_node in channel_nodes
+                for platform in _safe_json_loads(channel_node.platforms, [])
+            }
+        )
+    )
+    scout.telegram_review = any(channel_node.telegram_review for channel_node in channel_nodes)
+    return scout
+
+
+def _sort_content_items(items: list[ContentItem]) -> list[ContentItem]:
+    return sorted(
+        items,
+        key=lambda item: item.published_at or datetime.min,
+        reverse=True,
+    )
+
+
+def _content_dedupe_key(item: ContentItem) -> str:
+    if item.url:
+        return f"url:{item.url.strip().lower()}"
+    if item.source_id:
+        return f"source:{item.source_id.strip().lower()}"
+    return f"title:{item.title.strip().lower()}"
+
+
+def _tag_content_item_origin(item: ContentItem, scout_node: ScoutNodeModel) -> ContentItem:
+    metadata = dict(item.metadata or {})
+    matched_scouts = list(metadata.get("matched_scouts", []))
+    if scout_node.name not in matched_scouts:
+        matched_scouts.append(scout_node.name)
+    metadata["matched_scouts"] = matched_scouts
+    metadata["scout_node_id"] = scout_node.id
+    metadata["scout_node_name"] = scout_node.name
+    item.metadata = metadata
+    return item
+
+
+def _dedupe_content_items(items: list[ContentItem]) -> list[ContentItem]:
+    deduped: list[ContentItem] = []
+    index_by_key: dict[str, int] = {}
+
+    for item in _sort_content_items(items):
+        key = _content_dedupe_key(item)
+        existing_index = index_by_key.get(key)
+        if existing_index is None:
+            index_by_key[key] = len(deduped)
+            deduped.append(item)
+            continue
+
+        existing = deduped[existing_index]
+        existing_metadata = dict(existing.metadata or {})
+        existing_scouts = list(existing_metadata.get("matched_scouts", []))
+        for scout_name in item.metadata.get("matched_scouts", []):
+            if scout_name not in existing_scouts:
+                existing_scouts.append(scout_name)
+        if existing_scouts:
+            existing_metadata["matched_scouts"] = existing_scouts
+        if not existing.summary and item.summary:
+            existing.summary = item.summary
+        existing.metadata = existing_metadata
+
+    return deduped
+
+
+def get_scout_builder_snapshot() -> dict[str, Any]:
+    with next(get_session()) as session:
+        return {
+            "gemini_models": get_gemini_models(),
+            "flow_policies": [
+                {
+                    "id": "as_it_comes",
+                    "label": "As It Comes",
+                    "description": "Stop at the first scout that produces useful signals and send those forward.",
+                },
+                {
+                    "id": "pool",
+                    "label": "Pool Aggregation",
+                    "description": "Collect signals from every selected scout, merge them, and let the agent choose from the full pool.",
+                },
+            ],
+            "type_defaults": SCOUT_TYPE_TOOL_DEFAULTS,
+            "tool_catalog": SCOUT_TOOL_CATALOG,
+            "nodes": {
+                "scouts": [
+                    serialize_scout_node(node)
+                    for node in session.exec(select(ScoutNodeModel).order_by(ScoutNodeModel.created_at.desc())).all()
+                ],
+                "agents": [
+                    serialize_agent_node(node)
+                    for node in session.exec(select(AgentNodeModel).order_by(AgentNodeModel.created_at.desc())).all()
+                ],
+                "channels": [
+                    serialize_channel_node(node)
+                    for node in session.exec(select(ChannelNodeModel).order_by(ChannelNodeModel.created_at.desc())).all()
+                ],
+            },
+        }
+
+
+def create_scout_node(payload: dict[str, Any]) -> dict[str, Any]:
+    with next(get_session()) as session:
+        node = ScoutNodeModel(
+            name=payload.get("scout_node_name") or payload.get("name") or "Scout node",
+            type=payload["type"],
+            config_json=json.dumps(_build_scout_config(payload)),
+            schedule_cron=payload.get("schedule_cron"),
+        )
+        session.add(node)
+        session.commit()
+        session.refresh(node)
+        return serialize_scout_node(node)
+
+
+def update_scout_node(node_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    with next(get_session()) as session:
+        node = session.get(ScoutNodeModel, node_id)
+        if not node:
+            raise KeyError(f"Scout node {node_id} not found")
+        node.name = payload.get("scout_node_name") or payload.get("name") or node.name
+        node.type = payload.get("type", node.type)
+        node.config_json = json.dumps(_build_scout_config(payload))
+        node.schedule_cron = payload.get("schedule_cron")
+        session.add(node)
+        session.commit()
+        session.refresh(node)
+        return serialize_scout_node(node)
+
+
+def preview_scout_node(payload: dict[str, Any]) -> dict[str, Any]:
+    manager = ScoutManager()
+    preview_scout: ScoutModel | None = None
+    try:
+        preview_scout = ScoutModel(
+            name=payload.get("scout_node_name") or payload.get("name") or "Scout preview",
+            type=payload["type"],
+            config_json=json.dumps(_build_scout_config(payload)),
+            intent="scouting",
+            prompt_template="Preview scouting results only.",
+            schedule_cron=payload.get("schedule_cron"),
+            platforms=json.dumps(["telegram"]),
+            telegram_review=False,
+        )
+        manager.session.add(preview_scout)
+        manager.session.commit()
+        manager.session.refresh(preview_scout)
+        _subscribe_rss_feeds_for_legacy_scout(preview_scout.id, ScoutNodeModel(
+            name=preview_scout.name,
+            type=preview_scout.type,
+            config_json=preview_scout.config_json,
+            schedule_cron=preview_scout.schedule_cron,
+        ))
+        items = manager.run_scout(preview_scout, limit=8)
+        return {
+            "items_found": len(items),
+            "items": [
+                {
+                    "title": item.title,
+                    "url": item.url,
+                    "summary": item.summary,
+                    "published_at": item.published_at.isoformat() if item.published_at else None,
+                }
+                for item in items[:5]
+            ],
+        }
+    finally:
+        _cleanup_preview_scout(manager, preview_scout.id if preview_scout else None)
+        manager.session.close()
+
+
+def create_scout(payload: dict[str, Any]) -> dict[str, Any]:
+    with next(get_session()) as session:
+        existing_flow = session.exec(select(FlowModel).where(FlowModel.name == payload["name"])).first()
+        if existing_flow:
+            raise RuntimeError(f"Flow '{payload['name']}' already exists")
+
+        primary_scout_id = payload.get("scout_node_id")
+        if not primary_scout_id and payload.get("scout_node_ids"):
+            primary_scout_id = payload["scout_node_ids"][0]
+        scout_node = session.get(ScoutNodeModel, primary_scout_id) if primary_scout_id else None
+        if scout_node is None:
+            scout_node = ScoutNodeModel(
+                name=payload.get("scout_node_name") or f"{payload['name']} Scout",
+                type=payload["type"],
+                config_json=json.dumps(_build_scout_config(payload)),
+                schedule_cron=payload.get("schedule_cron"),
+            )
+            session.add(scout_node)
+            session.flush()
+
+        agent_node = session.get(AgentNodeModel, payload["agent_node_id"]) if payload.get("agent_node_id") else None
+        if agent_node is None:
+            agent_node = AgentNodeModel(
+                name=payload.get("agent_node_name") or f"{payload['name']} Agent",
+                intent=payload.get("intent", "scouting"),
+                prompt_template=payload.get("prompt_template") or (
+                    "Provide a clear summary of each content item found, highlighting why it's interesting and relevant."
+                    if payload.get("intent", "scouting") == "scouting"
+                    else "Summarize this content and highlight key takeaways for a social media audience."
+                ),
+                config_json=json.dumps(_build_agent_config(payload)),
+            )
+            session.add(agent_node)
+            session.flush()
+
+        primary_channel_id = payload.get("channel_node_id")
+        if not primary_channel_id and payload.get("channel_node_ids"):
+            primary_channel_id = payload["channel_node_ids"][0]
+        channel_node = session.get(ChannelNodeModel, primary_channel_id) if primary_channel_id else None
+        if channel_node is None:
+            channel_node = ChannelNodeModel(
+                name=payload.get("channel_node_name") or f"{payload['name']} Channel",
+                platforms=json.dumps(payload.get("platforms", ["telegram"])),
+                telegram_review=payload.get("telegram_review", False),
+                config_json=json.dumps({}),
+            )
+            session.add(channel_node)
+            session.flush()
+
+        channel_nodes = [channel_node]
+        legacy_scout = _upsert_legacy_scout_for_flow(
+            session, payload["name"], scout_node, agent_node, channel_nodes
+        )
+        flow = FlowModel(
+            name=payload["name"],
+            scout_node_id=scout_node.id,
+            agent_node_id=agent_node.id,
+            channel_node_id=channel_node.id,
+            legacy_scout_id=legacy_scout.id,
+        )
+        session.add(flow)
+        session.flush()
+        _sync_flow_scout_links(session, flow, _extract_flow_scout_ids(payload, scout_node.id))
+        _sync_flow_channel_links(session, flow, _extract_flow_channel_ids(payload, channel_node.id))
+        session.commit()
+        session.refresh(flow)
+        scout_nodes = _get_flow_scout_nodes(session, [flow.id]).get(flow.id, [scout_node])
+        channel_nodes = _get_flow_channel_nodes(session, [flow.id]).get(flow.id, [channel_node])
+        _upsert_legacy_scout_for_flow(session, payload["name"], scout_node, agent_node, channel_nodes, legacy_scout)
+        session.commit()
+        _subscribe_rss_feeds_for_flow(legacy_scout.id, scout_nodes)
+        return _serialize_flow(flow, scout_nodes, agent_node, channel_nodes)
+
+
+def update_scout_record(scout_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    with next(get_session()) as session:
+        flow, scout_node, agent_node, channel_node = _get_flow_bundle(session, scout_id)
+
+        if payload.get("name") and payload["name"] != flow.name:
+            existing_flow = session.exec(select(FlowModel).where(FlowModel.name == payload["name"])).first()
+            if existing_flow and existing_flow.id != flow.id:
+                raise RuntimeError(f"Flow '{payload['name']}' already exists")
+            flow.name = payload["name"]
+
+        primary_scout_id = payload.get("scout_node_id")
+        if not primary_scout_id and payload.get("scout_node_ids"):
+            primary_scout_id = payload["scout_node_ids"][0]
+        replacement_scout = session.get(ScoutNodeModel, primary_scout_id) if primary_scout_id else scout_node
+        replacement_agent = session.get(AgentNodeModel, payload["agent_node_id"]) if payload.get("agent_node_id") else agent_node
+        primary_channel_id = payload.get("channel_node_id")
+        if not primary_channel_id and payload.get("channel_node_ids"):
+            primary_channel_id = payload["channel_node_ids"][0]
+        replacement_channel = session.get(ChannelNodeModel, primary_channel_id) if primary_channel_id else channel_node
+
+        if replacement_scout is scout_node:
+            scout_node.name = payload.get("scout_node_name", scout_node.name)
+            scout_node.type = payload.get("type", scout_node.type)
+            scout_node.config_json = json.dumps(_build_scout_config(payload))
+            scout_node.schedule_cron = payload.get("schedule_cron")
+        else:
+            flow.scout_node_id = replacement_scout.id
+            scout_node = replacement_scout
+
+        if replacement_agent is agent_node:
+            agent_node.name = payload.get("agent_node_name", agent_node.name)
+            agent_node.intent = payload.get("intent", agent_node.intent)
+            if "prompt_template" in payload:
+                agent_node.prompt_template = payload.get("prompt_template")
+            agent_node.config_json = json.dumps(_build_agent_config(payload))
+        else:
+            flow.agent_node_id = replacement_agent.id
+            agent_node = replacement_agent
+
+        if replacement_channel is channel_node:
+            channel_node.name = payload.get("channel_node_name", channel_node.name)
+            channel_node.platforms = json.dumps(payload.get("platforms", ["telegram"]))
+            channel_node.telegram_review = payload.get("telegram_review", channel_node.telegram_review)
+        else:
+            flow.channel_node_id = replacement_channel.id
+            channel_node = replacement_channel
+
+        flow.updated_at = datetime.utcnow()
+
+        legacy_scout = session.get(ScoutModel, flow.legacy_scout_id) if flow.legacy_scout_id else None
+        channel_nodes = _get_flow_channel_nodes(session, [flow.id]).get(flow.id, [channel_node])
+        if replacement_channel is not channel_node:
+            channel_nodes = [replacement_channel]
+        else:
+            channel_nodes = [channel_node]
+        legacy_scout = _upsert_legacy_scout_for_flow(
+            session, flow.name, scout_node, agent_node, channel_nodes, legacy_scout
+        )
+        flow.legacy_scout_id = legacy_scout.id
+        session.add(flow)
+        _sync_flow_scout_links(session, flow, _extract_flow_scout_ids(payload, scout_node.id))
+        _sync_flow_channel_links(session, flow, _extract_flow_channel_ids(payload, channel_node.id))
+        session.commit()
+        session.refresh(flow)
+        scout_nodes = _get_flow_scout_nodes(session, [flow.id]).get(flow.id, [scout_node])
+        channel_nodes = _get_flow_channel_nodes(session, [flow.id]).get(flow.id, [channel_node])
+        _upsert_legacy_scout_for_flow(session, flow.name, scout_node, agent_node, channel_nodes, legacy_scout)
+        session.commit()
+        _subscribe_rss_feeds_for_flow(legacy_scout.id, scout_nodes)
+        return _serialize_flow(flow, scout_nodes, agent_node, channel_nodes)
+
+
+def delete_scout_record(scout_id: int) -> dict[str, Any]:
+    with next(get_session()) as session:
+        flow, scout_node, agent_node, channel_node = _get_flow_bundle(session, scout_id)
+        name = flow.name
+        legacy_scout = session.get(ScoutModel, flow.legacy_scout_id) if flow.legacy_scout_id else None
+        channel_nodes = _get_flow_channel_nodes(session, [flow.id]).get(flow.id, [channel_node])
+
+        if legacy_scout:
+            feedbacks = session.exec(
+                select(ScoutFeedbackModel).where(ScoutFeedbackModel.scout_id == legacy_scout.id)
+            ).all()
+            calibrations = session.exec(
+                select(ScoutCalibrationModel).where(ScoutCalibrationModel.scout_id == legacy_scout.id)
+            ).all()
+            for item in [*feedbacks, *calibrations]:
+                session.delete(item)
+            session.delete(legacy_scout)
+
+        session.delete(flow)
+        session.commit()
+
+        if not session.exec(select(FlowScoutLinkModel).where(FlowScoutLinkModel.scout_node_id == scout_node.id)).first():
+            session.delete(scout_node)
+        if not session.exec(select(FlowModel).where(FlowModel.agent_node_id == agent_node.id)).first():
+            session.delete(agent_node)
+        for current_channel_node in channel_nodes:
+            if not session.exec(
+                select(FlowChannelLinkModel).where(FlowChannelLinkModel.channel_node_id == current_channel_node.id)
+            ).first():
+                session.delete(current_channel_node)
+
+        session.commit()
+        return {"deleted": True, "name": name}
+
+
+def run_scout_workflow(scout_id: int) -> dict[str, Any]:
+    manager = ScoutManager()
+    try:
+        with next(get_session()) as session:
+            flow, scout_node, agent_node, channel_node = _get_flow_bundle(session, scout_id)
+            scout_nodes = _get_flow_scout_nodes(session, [flow.id]).get(flow.id, [scout_node])
+            channel_nodes = _get_flow_channel_nodes(session, [flow.id]).get(flow.id, [channel_node])
+            legacy_scout = manager.session.get(ScoutModel, flow.legacy_scout_id) if flow.legacy_scout_id else None
+            if not legacy_scout:
+                raise KeyError(f"Legacy scout for flow {scout_id} not found")
+            _subscribe_rss_feeds_for_flow(legacy_scout.id, scout_nodes)
+            agent_config = _safe_json_loads(agent_node.config_json, {})
+            flow_policy = agent_config.get("flow_policy", "pool")
+
+            items: list[ContentItem] = []
+            flow_errors: list[dict[str, Any]] = []
+            for current_scout_node in scout_nodes:
+                runtime_name = f"{flow.name} / {current_scout_node.name}"
+                _apply_runtime_scout_config(
+                    legacy_scout,
+                    flow.name,
+                    current_scout_node,
+                    agent_node,
+                    channel_nodes,
+                    runtime_name=runtime_name,
+                )
+                manager.session.add(legacy_scout)
+                manager.session.commit()
+                try:
+                    scout_items = manager.run_scout(legacy_scout)
+                except Exception as exc:
+                    flow_errors.append(
+                        {
+                            "scout_node_id": current_scout_node.id,
+                            "scout_node_name": current_scout_node.name,
+                            "error": str(exc),
+                        }
+                    )
+                    continue
+
+                items.extend(
+                    [
+                        _tag_content_item_origin(item, current_scout_node)
+                        for item in scout_items
+                    ]
+                )
+                if flow_policy == "as_it_comes" and scout_items:
+                    break
+
+            if flow_errors and not items:
+                raise RuntimeError(
+                    "All scouts in this flow failed: "
+                    + "; ".join(
+                        f"{entry['scout_node_name']}: {entry['error']}" for entry in flow_errors
+                    )
+                )
+
+            _apply_runtime_scout_config(
+                legacy_scout,
+                flow.name,
+                scout_nodes[0],
+                agent_node,
+                channel_nodes,
+            )
+            legacy_scout.last_run = datetime.utcnow()
+            manager.session.add(legacy_scout)
+            manager.session.commit()
+
+            items = _dedupe_content_items(items)
+
+        with next(get_session()) as session:
+            flow, scout_node, agent_node, channel_node = _get_flow_bundle(session, scout_id)
+            scout_nodes = _get_flow_scout_nodes(session, [flow.id]).get(flow.id, [scout_node])
+            channel_nodes = _get_flow_channel_nodes(session, [flow.id]).get(flow.id, [channel_node])
+            flow.updated_at = legacy_scout.last_run or datetime.utcnow()
+            for current_scout_node in scout_nodes:
+                current_scout_node.last_run = legacy_scout.last_run
+                session.add(current_scout_node)
+            session.add(flow)
+            session.commit()
+
+        if not items:
+            return {
+                "scout": _serialize_flow(flow, scout_nodes, agent_node, channel_nodes),
+                "items_found": 0,
+                "created_post": None,
+                "created_posts": [],
+                "source_failures": flow_errors,
+            }
+
+        created_posts: list[PostModel] = []
+        if legacy_scout.intent == "scouting":
+            content = manager.format_scouting_output(legacy_scout, items)
+            delivery_platforms = sorted(
+                {
+                    platform
+                    for current_channel_node in channel_nodes
+                    for platform in _safe_json_loads(current_channel_node.platforms, [])
+                }
+            ) or ["telegram"]
+            for platform in delivery_platforms:
+                created_posts.append(
+                    PostModel(
+                        content=content,
+                        platform=platform,
+                        status="pending_review",
+                        created_at=datetime.utcnow(),
+                        scout_id=legacy_scout.id,
+                    )
+                )
+        else:
+            best_item = manager.select_best_content(items, legacy_scout)
+            if best_item:
+                platforms = _safe_json_loads(legacy_scout.platforms, [])
+                draft = manager.generate_draft(legacy_scout, best_item)
+                for platform in (platforms or ["x"]):
+                    created_posts.append(
+                        PostModel(
+                            content=draft,
+                            platform=platform,
+                            status="pending_review",
+                            created_at=datetime.utcnow(),
+                            scout_id=legacy_scout.id,
+                        )
+                    )
+
+        if created_posts:
+            for created_post in created_posts:
+                manager.session.add(created_post)
+            manager.session.commit()
+            for created_post in created_posts:
+                manager.session.refresh(created_post)
+
+        return {
+            "scout": _serialize_flow(flow, scout_nodes, agent_node, channel_nodes),
+            "items_found": len(items),
+            "created_post": serialize_post(created_posts[0], flow.name) if created_posts else None,
+            "created_posts": [serialize_post(created_post, flow.name) for created_post in created_posts],
+            "source_failures": flow_errors,
+        }
+    finally:
+        manager.session.close()
+
+
+def approve_post(post_id: int) -> dict[str, Any]:
+    with next(get_session()) as session:
+        post = session.get(PostModel, post_id)
+        if not post:
+            raise KeyError(f"Post {post_id} not found")
+
+        payload: dict[str, Any] = {"message": "Post approved"}
+
+        if post.platform == "telegram":
+            post.status = "posted"
+            post.posted_at = datetime.utcnow()
+        elif post.platform == "x":
+            provider = XProvider()
+            if not provider.authenticate():
+                raise RuntimeError("X authentication failed")
+            post.external_id = provider.post(post.content)
+            post.status = "posted"
+            post.posted_at = datetime.utcnow()
+            payload["message"] = "Posted to X"
+        elif post.platform == "substack":
+            provider = SubstackProvider()
+            if not provider.authenticate():
+                raise RuntimeError("Substack authentication failed")
+            post.external_id = provider.post(post.content)
+            post.status = "posted"
+            post.posted_at = datetime.utcnow()
+            payload["message"] = "Substack draft created"
+            payload["edit_url"] = (
+                f"https://{os.getenv('SUBSTACK_SUBDOMAIN')}.substack.com/publish/post/{post.external_id}"
+                if os.getenv("SUBSTACK_SUBDOMAIN")
+                else None
+            )
+        else:
+            raise RuntimeError(f"Platform '{post.platform}' is not supported")
+
+        session.add(post)
+        session.commit()
+        session.refresh(post)
+        payload["post"] = serialize_post(post)
+        return payload
+
+
+def reject_post(post_id: int) -> dict[str, Any]:
+    with next(get_session()) as session:
+        post = session.get(PostModel, post_id)
+        if not post:
+            raise KeyError(f"Post {post_id} not found")
+
+        post.status = "rejected"
+        session.add(post)
+        session.commit()
+        session.refresh(post)
+        return {
+            "message": "Post rejected",
+            "post": serialize_post(post),
+        }
+
+
+def refresh_rss_feed(feed_id: int) -> dict[str, Any]:
+    manager = RSSManager()
+    return manager.update_feed(feed_id)
+
+
+def create_quick_post(
+    content: str,
+    platforms: list[str],
+    review_before_publish: bool = False,
+) -> dict[str, Any]:
+    created_posts: list[dict[str, Any]] = []
+
+    with next(get_session()) as session:
+        for platform in platforms:
+            if review_before_publish or platform == "telegram":
+                db_post = PostModel(
+                    content=content,
+                    platform=platform,
+                    status="pending_review",
+                    created_at=datetime.utcnow(),
+                )
+                session.add(db_post)
+                session.commit()
+                session.refresh(db_post)
+                created_posts.append(serialize_post(db_post))
+                continue
+
+            if platform == "x":
+                provider = XProvider()
+                if not provider.authenticate():
+                    raise RuntimeError("X authentication failed")
+                external_id = provider.post(content)
+            elif platform == "substack":
+                provider = SubstackProvider()
+                if not provider.authenticate():
+                    raise RuntimeError("Substack authentication failed")
+                external_id = provider.post(content)
+            else:
+                raise RuntimeError(f"Unsupported platform '{platform}'")
+
+            db_post = PostModel(
+                content=content,
+                platform=platform,
+                status="posted",
+                external_id=external_id,
+                created_at=datetime.utcnow(),
+                posted_at=datetime.utcnow(),
+            )
+            session.add(db_post)
+            session.commit()
+            session.refresh(db_post)
+            created_posts.append(serialize_post(db_post))
+
+    return {
+        "message": "Post workflow completed",
+        "posts": created_posts,
+    }
+
+
+def get_settings_snapshot() -> dict[str, Any]:
+    config_manager = ConfigManager()
+    config_manager.ensure_config_exists()
+    load_dotenv(dotenv_path=ENV_FILE, override=True)
+
+    return {
+        "config_file": str(CONFIG_FILE),
+        "env_file": str(ENV_FILE),
+        "ai": {
+            "default_provider": config_manager.get("ai.default_provider", "gemini"),
+            "gemini_model": config_manager.get("ai.providers.gemini.default_model", "gemini-2.5-flash"),
+            "gemini_models": get_gemini_models(),
+        },
+        "embeddings": {
+            "enabled": config_manager.get("embeddings.enabled", True),
+            "model_name": config_manager.get("embeddings.model_name"),
+        },
+        "credentials": {
+            "gemini": bool(os.getenv("GEMINI_API_KEY")),
+            "telegram": bool(os.getenv("TELEGRAM_BOT_TOKEN")) and bool(os.getenv("TELEGRAM_CHAT_ID")),
+            "x": all(
+                bool(os.getenv(key))
+                for key in ["X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_TOKEN_SECRET"]
+            ),
+            "substack": all(
+                bool(os.getenv(key))
+                for key in ["SUBSTACK_SUBDOMAIN", "SUBSTACK_SID", "SUBSTACK_LLI"]
+            ),
+            "stability": bool(os.getenv("STABILITY_API_KEY")),
+            "langfuse": all(
+                bool(os.getenv(key))
+                for key in ["LANGFUSE_HOST", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"]
+            ),
+        },
+        "values": {
+            "telegram_chat_id": os.getenv("TELEGRAM_CHAT_ID", ""),
+            "substack_subdomain": os.getenv("SUBSTACK_SUBDOMAIN", ""),
+            "langfuse_host": os.getenv("LANGFUSE_HOST", ""),
+        },
+    }
+
+
+def update_settings(payload: dict[str, Any]) -> dict[str, Any]:
+    config_manager = ConfigManager()
+    config_manager.ensure_config_exists()
+    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ENV_FILE.touch(exist_ok=True)
+
+    ai = payload.get("ai", {})
+    embeddings = payload.get("embeddings", {})
+    credentials = payload.get("credentials", {})
+
+    if "default_provider" in ai:
+        config_manager.set("ai.default_provider", ai["default_provider"])
+    if "gemini_model" in ai:
+        config_manager.set("ai.providers.gemini.default_model", ai["gemini_model"])
+    if "enabled" in embeddings:
+        config_manager.set("embeddings.enabled", embeddings["enabled"])
+    if "model_name" in embeddings:
+        config_manager.set("embeddings.model_name", embeddings["model_name"] or None)
+
+    env_mapping = {
+        "gemini_api_key": "GEMINI_API_KEY",
+        "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
+        "telegram_chat_id": "TELEGRAM_CHAT_ID",
+        "x_api_key": "X_API_KEY",
+        "x_api_secret": "X_API_SECRET",
+        "x_access_token": "X_ACCESS_TOKEN",
+        "x_access_token_secret": "X_ACCESS_TOKEN_SECRET",
+        "substack_subdomain": "SUBSTACK_SUBDOMAIN",
+        "substack_sid": "SUBSTACK_SID",
+        "substack_lli": "SUBSTACK_LLI",
+        "stability_api_key": "STABILITY_API_KEY",
+        "langfuse_host": "LANGFUSE_HOST",
+        "langfuse_public_key": "LANGFUSE_PUBLIC_KEY",
+        "langfuse_secret_key": "LANGFUSE_SECRET_KEY",
+    }
+
+    for payload_key, env_key in env_mapping.items():
+        if payload_key in credentials:
+            value = credentials[payload_key] or ""
+            set_key(ENV_FILE, env_key, value)
+            os.environ[env_key] = value
+
+    load_dotenv(dotenv_path=ENV_FILE, override=True)
+    return get_settings_snapshot()
+
+
+def get_logs(lines: int = 100) -> dict[str, Any]:
+    app_log = LOGS_DIR / "app" / "app.log"
+    bot_log = ENV_FILE.parent / "bot-service.log"
+
+    def read_tail(path: str) -> list[str]:
+        file_path = os.path.expanduser(path)
+        target = os.path.abspath(file_path)
+        if not os.path.exists(target):
+            return []
+        with open(target, "r", encoding="utf-8") as handle:
+            return [line.rstrip("\n") for line in handle.readlines()[-lines:]]
+
+    return {
+        "app": read_tail(str(app_log)),
+        "bot": read_tail(str(bot_log)),
+    }
+
+
+def get_gemini_models() -> list[str]:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"]
+
+    try:
+        response = requests.get(
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            headers={"x-goog-api-key": api_key},
+            timeout=15,
+        )
+        response.raise_for_status()
+        data = response.json()
+        models = []
+        for model in data.get("models", []):
+            name = model.get("name", "")
+            supported_methods = model.get("supportedGenerationMethods", [])
+            if not name.startswith("models/gemini"):
+                continue
+            if "generateContent" not in supported_methods:
+                continue
+            models.append(name.replace("models/", ""))
+        return sorted(set(models))
+    except Exception:
+        return ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"]

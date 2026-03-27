@@ -14,6 +14,7 @@ from influencerpy.tools.search import google_search
 from influencerpy.tools.reddit import reddit
 from influencerpy.tools.arxiv_tool import arxiv_search
 from influencerpy.tools.http_tool import http_request
+from influencerpy.tools.substack_tool import substack_tool
 from influencerpy.core.interfaces import AgentProvider
 from influencerpy.providers.gemini import GeminiProvider
 from influencerpy.providers.anthropic import AnthropicProvider
@@ -177,8 +178,10 @@ class ScoutManager:
             url = config.get("url")
             feeds = config.get("feeds", [])
             subreddits = config.get("subreddits", [])
+            newsletter_url = config.get("newsletter_url")
             tools_config = config.get("tools", [])
             reddit_sort = config.get("reddit_sort", "hot")
+            substack_sort = config.get("substack_sort", "new")
             sort_hint = ""
             
             if retry_modifications:
@@ -218,6 +221,12 @@ class ScoutManager:
                         goal += f" {sort_hint}."
                     else:
                         goal += " Try exploring different topics or sorting methods to find new content."
+            elif newsletter_url and "substack" in tools_config:
+                goal = f"Find interesting content from the Substack newsletter at: {newsletter_url}. Use the 'substack' tool with sorting='{substack_sort}'."
+                if query:
+                    goal += f" Focus on posts related to: '{query}'."
+                if retry_attempt > 0:
+                    goal += " Look further back or explore a different angle to find fresh material."
             elif "arxiv" in tools_config:
                 date_filter = config.get("date_filter")
                 days_back_map = {
@@ -241,8 +250,13 @@ class ScoutManager:
                 if retry_attempt > 0:
                     goal += " Try different search terms or angles to find new content."
             
-            # Use custom prompt_template if provided, otherwise use auto-generated goal
-            user_instructions = scout.prompt_template or goal
+            # Combine goal (which includes subreddit/feed info) with optional style template
+            if scout.prompt_template and goal != scout.prompt_template:
+                # Use goal as primary instruction, add template as style guidance
+                user_instructions = f"{goal}\n\nStyle and Tone: {scout.prompt_template}"
+            else:
+                # Use goal or template if goal is not set
+                user_instructions = goal or scout.prompt_template
             
             # Build structured system prompt
             system_prompt = SystemPrompt(
@@ -275,6 +289,8 @@ The tool will save the image and return the path (or you can infer it from the t
                 logger.info(f"Retry attempt {retry_attempt}: Executing agent with modified parameters...")
             else:
                 logger.info("Executing agent...")
+            
+            logger.info(f"Prompt being sent to agent:\n{prompt}")
             
             try:
                 response = agent(prompt, structured_output_model=ScoutResponse)
@@ -502,6 +518,8 @@ The tool will save the image and return the path (or you can infer it from the t
                     agent_tools.append(arxiv_search)
                 if "http_request" in tools_config:
                     agent_tools.append(http_request)
+                if "substack" in tools_config:
+                    agent_tools.append(substack_tool)
                 
                 # Check for image generation
                 if config.get("image_generation"):

@@ -42,30 +42,11 @@ The AI agent currently struggles with **complex, multi-step browser interactions
 
 ## Example: What Works
 
-```python
-# ✅ This works well
-scout = {
-    "name": "TechCrunchDaily",
-    "type": "web",
-    "url": "https://techcrunch.com",
-    "tools": ["browser"],
-    "goal": "Extract the titles and summaries of the top 3 articles"
-}
-```
+
 
 ## Example: What Doesn't Work Reliably
 
-```python
-# ❌ This often fails
-scout = {
-    "name": "HuggingFaceTop",
-    "type": "web",
-    "url": "https://huggingface.co/papers",
-    "tools": ["browser"],
-    "goal": "Find paper with most upvotes, click it, and read the abstract"
-}
-# Problem: Agent won't click on the paper link
-```
+
 
 ## Workarounds
 

@@ -327,6 +327,25 @@ class RSSManager:
                     "content": [{"text": f"Feed {feed_id} not found"}],
                 }
 
+            # Check if feed needs updating (stale or never updated)
+            needs_update = False
+            if feed.last_updated is None:
+                needs_update = True
+            else:
+                minutes_since_update = (
+                    datetime.utcnow() - feed.last_updated
+                ).total_seconds() / 60
+                if minutes_since_update >= feed.update_interval:
+                    needs_update = True
+
+            # Auto-update if stale
+            if needs_update:
+                logger.info(f"Feed {feed_id} is stale, updating before read...")
+                # update_feed manages its own session, so we can call it directly
+                self.update_feed(feed_id)
+                # Refresh the feed object to get updated metadata
+                session.refresh(feed)
+
             query = (
                 select(RSSEntryModel)
                 .where(RSSEntryModel.feed_id == feed_id)
