@@ -5,24 +5,49 @@ import subprocess
 import sys
 import time
 import webbrowser
+from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import urlopen
 
 from influencerpy.config import PROJECT_ROOT
 
-FRONTEND_DIR = PROJECT_ROOT / "frontend"
+
+def _resolve_project_root() -> Path:
+    override = os.getenv("INFLUENCERPY_PROJECT_ROOT")
+    if override:
+        candidate = Path(override).expanduser().resolve()
+        if (candidate / "frontend").exists():
+            return candidate
+
+    cwd = Path.cwd().resolve()
+    if (cwd / "frontend").exists():
+        return cwd
+
+    if (PROJECT_ROOT / "frontend").exists():
+        return PROJECT_ROOT
+
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "frontend").exists():
+            return parent
+
+    return PROJECT_ROOT
+
+
+def _frontend_dir() -> Path:
+    return _resolve_project_root() / "frontend"
 
 
 def _wait_for_frontend_dependencies() -> None:
-    node_modules = FRONTEND_DIR / "node_modules"
+    frontend_dir = _frontend_dir()
+    node_modules = frontend_dir / "node_modules"
     if node_modules.exists():
         return
 
-    subprocess.run(["npm", "install"], cwd=FRONTEND_DIR, check=True)
+    subprocess.run(["npm", "install"], cwd=frontend_dir, check=True)
 
 
 def _ensure_frontend_build(env: dict[str, str]) -> None:
-    subprocess.run(["npm", "run", "build"], cwd=FRONTEND_DIR, env=env, check=True)
+    subprocess.run(["npm", "run", "build"], cwd=_frontend_dir(), env=env, check=True)
 
 
 def _is_port_available(host: str, port: int) -> bool:
@@ -79,6 +104,7 @@ def launch_dashboard_stack(
     open_browser: bool = True,
 ) -> None:
     """Launch the dashboard backend and frontend together."""
+    project_root = _resolve_project_root()
     _wait_for_frontend_dependencies()
 
     backend_port = _find_available_port(backend_host, backend_port)
@@ -101,7 +127,7 @@ def launch_dashboard_stack(
             "--port",
             str(backend_port),
         ],
-        cwd=PROJECT_ROOT,
+        cwd=project_root,
         env=os.environ.copy(),
     )
 
@@ -116,7 +142,7 @@ def launch_dashboard_stack(
 
     frontend_process = subprocess.Popen(
         ["npm", "run", "start"],
-        cwd=FRONTEND_DIR,
+        cwd=_frontend_dir(),
         env=frontend_env,
     )
 
