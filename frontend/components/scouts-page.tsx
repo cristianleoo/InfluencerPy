@@ -1115,7 +1115,7 @@ export function ScoutsPage({
                     </p>
                     <div className="button-row">
                       {!flowGeneratorReady ? (
-                        <Link className="button button-secondary" href={flowGenerator?.settings_path ?? "/settings"}>
+                        <Link className="button button-secondary" href={flowGenerator?.settings_path ?? "settings"}>
                           Open settings
                         </Link>
                       ) : null}
@@ -1291,7 +1291,7 @@ export function ScoutsPage({
                     />
                     <div className="flow-ai-inline-actions">
                       {!flowGeneratorReady ? (
-                        <Link className="button button-secondary" href={flowGenerator?.settings_path ?? "/settings"}>
+                        <Link className="button button-secondary" href={flowGenerator?.settings_path ?? "settings"}>
                           Open settings
                         </Link>
                       ) : null}

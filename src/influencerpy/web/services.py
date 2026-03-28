@@ -141,7 +141,7 @@ def _flow_generator_status() -> dict[str, Any]:
         "provider": provider,
         "model_id": model_id or "gemini-2.5-flash",
         "missing_requirements": missing_requirements,
-        "settings_path": "/settings",
+        "settings_path": "settings",
     }
 
 
