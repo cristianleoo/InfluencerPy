@@ -13,6 +13,7 @@ from influencerpy.database import get_session
 from influencerpy.logger import LOGS_DIR
 from influencerpy.platforms.substack_platform import SubstackProvider
 from influencerpy.platforms.x_platform import XProvider
+from influencerpy.providers.gemini import GeminiProvider
 from influencerpy.tools.rss import RSSManager
 from influencerpy.types.models import ContentItem
 from influencerpy.types.rss import RSSFeedModel, RSSEntryModel
@@ -84,6 +85,11 @@ SCOUT_TOOL_CATALOG: list[dict[str, Any]] = [
     },
 ]
 
+SUPPORTED_FLOW_CHANNELS = {"telegram", "x", "substack"}
+SUPPORTED_SCOUT_TYPES = {"search", "rss", "reddit", "substack", "browser", "arxiv"}
+SUPPORTED_FLOW_POLICIES = {"as_it_comes", "pool"}
+SUPPORTED_AGENT_INTENTS = {"scouting", "generation"}
+
 
 def _safe_json_loads(raw: str | None, fallback: Any) -> Any:
     if not raw:
@@ -92,6 +98,51 @@ def _safe_json_loads(raw: str | None, fallback: Any) -> Any:
         return json.loads(raw)
     except json.JSONDecodeError:
         return fallback
+
+
+def _extract_json_object(raw: str) -> dict[str, Any]:
+    candidate = raw.strip()
+    if candidate.startswith("```"):
+        candidate = candidate.strip("`")
+        if candidate.startswith("json"):
+            candidate = candidate[4:].strip()
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError("Flow planner returned invalid JSON.")
+        parsed = json.loads(raw[start : end + 1])
+
+    if not isinstance(parsed, dict):
+        raise ValueError("Flow planner returned an unexpected response shape.")
+    return parsed
+
+
+def _flow_generator_status() -> dict[str, Any]:
+    config_manager = ConfigManager()
+    config_manager.ensure_config_exists()
+    load_dotenv(dotenv_path=ENV_FILE, override=True)
+
+    provider = config_manager.get("ai.default_provider", "gemini")
+    model_id = (config_manager.get("ai.providers.gemini.default_model", "gemini-2.5-flash") or "").strip()
+    missing_requirements: list[str] = []
+
+    if provider != "gemini":
+        missing_requirements.append("Set Gemini as the default AI provider in Settings.")
+    if not os.getenv("GEMINI_API_KEY"):
+        missing_requirements.append("Add a Gemini API key in Settings.")
+    if not model_id:
+        missing_requirements.append("Choose a Gemini model in Settings.")
+
+    return {
+        "enabled": not missing_requirements,
+        "provider": provider,
+        "model_id": model_id or "gemini-2.5-flash",
+        "missing_requirements": missing_requirements,
+        "settings_path": "/settings",
+    }
 
 
 def serialize_post(post: PostModel, scout_name: str | None = None) -> dict[str, Any]:
@@ -725,6 +776,7 @@ def get_scout_builder_snapshot() -> dict[str, Any]:
         ]
         return {
             "gemini_models": get_gemini_models(),
+            "flow_generator": _flow_generator_status(),
             "flow_policies": [
                 {
                     "id": "as_it_comes",
@@ -758,6 +810,275 @@ def get_scout_builder_snapshot() -> dict[str, Any]:
                     for node in channel_nodes
                     if _channel_node_kind(node) != "verifier"
                 ],
+            },
+        }
+
+
+def _normalize_generated_scout(spec: dict[str, Any], index: int) -> dict[str, Any]:
+    scout_type = spec.get("type", "rss")
+    if scout_type not in SUPPORTED_SCOUT_TYPES:
+        scout_type = "rss"
+
+    name = str(spec.get("name") or f"Scout {index}").strip() or f"Scout {index}"
+    schedule_cron = str(spec.get("schedule_cron") or "").strip() or None
+
+    normalized = {
+        "name": name,
+        "type": scout_type,
+        "schedule_cron": schedule_cron,
+        "tools": SCOUT_TYPE_TOOL_DEFAULTS.get(scout_type, [scout_type]),
+        "query": str(spec.get("query") or "").strip(),
+        "feeds": [str(feed).strip() for feed in spec.get("feeds", []) if str(feed).strip()],
+        "subreddits": [str(item).strip() for item in spec.get("subreddits", []) if str(item).strip()],
+        "reddit_sort": str(spec.get("reddit_sort") or "hot").strip() or "hot",
+        "newsletter_url": str(spec.get("newsletter_url") or "").strip(),
+        "substack_sort": str(spec.get("substack_sort") or "new").strip() or "new",
+        "url": str(spec.get("url") or "").strip(),
+        "date_filter": str(spec.get("date_filter") or "").strip(),
+    }
+
+    if scout_type == "rss" and not normalized["feeds"]:
+        normalized["feeds"] = ["https://example.com/feed.xml"]
+    if scout_type == "reddit" and not normalized["subreddits"]:
+        normalized["subreddits"] = ["technology"]
+    if scout_type in {"search", "arxiv"} and not normalized["query"]:
+        normalized["query"] = "AI"
+    if scout_type == "substack" and not normalized["newsletter_url"]:
+        normalized["newsletter_url"] = "https://www.example.com"
+    if scout_type == "browser" and not normalized["url"]:
+        normalized["url"] = "https://example.com"
+
+    return normalized
+
+
+def _normalize_generated_channel(spec: dict[str, Any], index: int) -> dict[str, Any]:
+    platforms = [
+        platform
+        for platform in [str(item).strip().lower() for item in spec.get("platforms", [])]
+        if platform in SUPPORTED_FLOW_CHANNELS
+    ]
+    if not platforms:
+        platforms = ["telegram"]
+    return {
+        "name": str(spec.get("name") or f"Output {index}").strip() or f"Output {index}",
+        "platforms": platforms,
+    }
+
+
+def _build_flow_planner_prompt(user_prompt: str, model_id: str) -> str:
+    return f"""
+You are planning an InfluencerPy workflow graph.
+
+The user will describe the automation they want. Produce only valid JSON with this shape:
+{{
+  "name": "short flow name",
+  "summary": "one sentence summary",
+  "scouts": [
+    {{
+      "name": "node name",
+      "type": "rss|reddit|search|substack|browser|arxiv",
+      "schedule_cron": "cron string or empty string for manual",
+      "query": "optional",
+      "feeds": ["rss feed urls"],
+      "subreddits": ["subreddit names"],
+      "reddit_sort": "hot|new|top|rising",
+      "newsletter_url": "optional",
+      "substack_sort": "new|top",
+      "url": "optional",
+      "date_filter": "today|week|month"
+    }}
+  ],
+  "policy": {{
+    "flow_policy": "pool|as_it_comes"
+  }},
+  "agent": {{
+    "name": "agent name",
+    "intent": "scouting|generation",
+    "prompt_template": "clear instructions for the agent",
+    "temperature": 0.0,
+    "image_generation": false
+  }},
+  "channels": [
+    {{
+      "name": "channel name",
+      "platforms": ["telegram|x|substack"]
+    }}
+  ],
+  "verifier": {{
+    "enabled": false,
+    "name": "optional verifier name",
+    "platform": "telegram"
+  }}
+}}
+
+Rules:
+- One scout node must use exactly one scout type.
+- If there is more than one scout, include a policy.
+- Agents transform scout outputs into content. Agents do not own scout sources.
+- Channels are final outputs. A flow can have multiple channels.
+- Use manual scheduling unless the request clearly asks for a schedule.
+- Be practical and concise. Keep names product-like.
+- The configured model for generation is {model_id}.
+- Return JSON only. No markdown fences.
+
+User request:
+{user_prompt.strip()}
+""".strip()
+
+
+def generate_flow_suggestion(payload: dict[str, Any]) -> dict[str, Any]:
+    prompt = str(payload.get("prompt") or "").strip()
+    if not prompt:
+        raise ValueError("Describe the workflow you want to build.")
+
+    status = _flow_generator_status()
+    if not status["enabled"]:
+        raise ValueError(" ".join(status["missing_requirements"]))
+
+    provider = GeminiProvider(model_id=status["model_id"], temperature=0.35)
+    raw_response = provider.generate(_build_flow_planner_prompt(prompt, status["model_id"]))
+    planned = _extract_json_object(raw_response)
+
+    scouts = planned.get("scouts", [])
+    channels = planned.get("channels", [])
+    agent = planned.get("agent", {})
+    policy = planned.get("policy", {})
+    verifier = planned.get("verifier", {})
+
+    if not isinstance(scouts, list) or not scouts:
+        raise ValueError("Flow planner did not produce any scout nodes.")
+    if not isinstance(channels, list) or not channels:
+        raise ValueError("Flow planner did not produce any output channels.")
+    if not isinstance(agent, dict):
+        raise ValueError("Flow planner did not produce an agent configuration.")
+
+    normalized_scouts = [
+        _normalize_generated_scout(item if isinstance(item, dict) else {}, index + 1)
+        for index, item in enumerate(scouts[:4])
+    ]
+    normalized_channels = [
+        _normalize_generated_channel(item if isinstance(item, dict) else {}, index + 1)
+        for index, item in enumerate(channels[:4])
+    ]
+    flow_name = str(planned.get("name") or "AI-generated flow").strip() or "AI-generated flow"
+    summary = str(planned.get("summary") or "").strip()
+    flow_policy = str(policy.get("flow_policy") or "pool")
+    if flow_policy not in SUPPORTED_FLOW_POLICIES:
+        flow_policy = "pool"
+
+    agent_intent = str(agent.get("intent") or "generation")
+    if agent_intent not in SUPPORTED_AGENT_INTENTS:
+        agent_intent = "generation"
+
+    temperature = agent.get("temperature", 0.7)
+    try:
+        temperature = float(temperature)
+    except (TypeError, ValueError):
+        temperature = 0.7
+    temperature = max(0.0, min(1.0, temperature))
+
+    verifier_enabled = bool(verifier.get("enabled"))
+    verifier_platform = str(verifier.get("platform") or "telegram").strip().lower() or "telegram"
+    if verifier_platform not in SUPPORTED_FLOW_CHANNELS:
+        verifier_platform = "telegram"
+
+    with next(get_session()) as session:
+        scout_nodes: list[ScoutNodeModel] = []
+        for scout_spec in normalized_scouts:
+            node = ScoutNodeModel(
+                name=scout_spec["name"],
+                type=scout_spec["type"],
+                config_json=json.dumps(_build_scout_config(scout_spec)),
+                schedule_cron=scout_spec["schedule_cron"],
+            )
+            session.add(node)
+            session.flush()
+            scout_nodes.append(node)
+
+        agent_payload = {
+            "provider": "gemini",
+            "model_id": status["model_id"],
+            "temperature": temperature,
+            "flow_policy": flow_policy,
+            "image_generation": bool(agent.get("image_generation")),
+        }
+        agent_node = AgentNodeModel(
+            name=str(agent.get("name") or f"{flow_name} Agent").strip() or f"{flow_name} Agent",
+            intent=agent_intent,
+            prompt_template=str(
+                agent.get("prompt_template")
+                or (
+                    "Turn the incoming scout context into a concise, useful digest."
+                    if agent_intent == "scouting"
+                    else "Turn the incoming scout context into a publish-ready draft."
+                )
+            ).strip(),
+            config_json=json.dumps(_build_agent_config(agent_payload)),
+        )
+        session.add(agent_node)
+        session.flush()
+
+        channel_nodes: list[ChannelNodeModel] = []
+        for channel_spec in normalized_channels:
+            node = ChannelNodeModel(
+                name=channel_spec["name"],
+                platforms=json.dumps(channel_spec["platforms"]),
+                telegram_review=False,
+                config_json=json.dumps({"kind": "channel"}),
+            )
+            session.add(node)
+            session.flush()
+            channel_nodes.append(node)
+
+        verifier_node = None
+        if verifier_enabled:
+            verifier_node = ChannelNodeModel(
+                name=str(verifier.get("name") or f"{flow_name} Verifier").strip() or f"{flow_name} Verifier",
+                platforms=json.dumps([verifier_platform]),
+                telegram_review=False,
+                config_json=json.dumps({"kind": "verifier"}),
+            )
+            session.add(verifier_node)
+            session.flush()
+
+        session.commit()
+
+        return {
+            "name": flow_name,
+            "summary": summary,
+            "prompt": prompt,
+            "payload": {
+                "name": flow_name,
+                "scout_node_id": scout_nodes[0].id,
+                "scout_node_ids": [node.id for node in scout_nodes if node.id is not None],
+                "scout_node_name": scout_nodes[0].name,
+                "agent_node_id": agent_node.id,
+                "agent_node_name": agent_node.name,
+                "channel_node_id": channel_nodes[0].id,
+                "channel_node_ids": [node.id for node in channel_nodes if node.id is not None],
+                "channel_node_name": channel_nodes[0].name,
+                "verifier_enabled": verifier_enabled,
+                "verifier_node_id": verifier_node.id if verifier_node and verifier_node.id is not None else None,
+                "verifier_node_name": verifier_node.name if verifier_node else "",
+                "verifier_platform": verifier_platform,
+                "type": scout_nodes[0].type,
+                "intent": agent_node.intent,
+                "schedule_cron": scout_nodes[0].schedule_cron,
+                "tools": SCOUT_TYPE_TOOL_DEFAULTS.get(scout_nodes[0].type, [scout_nodes[0].type]),
+                "prompt_template": agent_node.prompt_template or "",
+                "telegram_review": False,
+                "platforms": normalized_channels[0]["platforms"],
+                "image_generation": bool(agent_payload["image_generation"]),
+                "provider": "gemini",
+                "model_id": status["model_id"],
+                "temperature": temperature,
+                "flow_policy": flow_policy,
+            },
+            "nodes": {
+                "scouts": [serialize_scout_node(node) for node in scout_nodes],
+                "agent": serialize_agent_node(agent_node),
+                "channels": [serialize_channel_node(node) for node in channel_nodes],
+                "verifier": serialize_channel_node(verifier_node) if verifier_node else None,
             },
         }
 

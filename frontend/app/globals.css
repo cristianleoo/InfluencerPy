@@ -798,7 +798,115 @@ button {
 
 .studio-board-active .board-stage {
   min-height: 0;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto 1fr auto;
+}
+
+.flow-ai-planner {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background:
+    radial-gradient(circle at top left, rgba(72, 199, 255, 0.12), transparent 32%),
+    linear-gradient(135deg, rgba(14, 20, 34, 0.96), rgba(20, 26, 42, 0.88));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.flow-ai-planner-inline {
+  padding: 16px 18px;
+}
+
+.flow-ai-planner-locked {
+  border-color: rgba(255, 255, 255, 0.06);
+  background: linear-gradient(135deg, rgba(14, 20, 34, 0.88), rgba(20, 26, 42, 0.8));
+}
+
+.flow-ai-planner-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.flow-ai-planner-head strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 1rem;
+  line-height: 1.35;
+}
+
+.flow-ai-status {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.flow-ai-status.ready {
+  background: rgba(61, 199, 136, 0.12);
+  border: 1px solid rgba(61, 199, 136, 0.22);
+  color: #9af0c5;
+}
+
+.flow-ai-status.locked {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(218, 228, 249, 0.72);
+}
+
+.flow-ai-textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+
+.flow-ai-textarea.compact {
+  min-height: 88px;
+}
+
+.flow-ai-footer,
+.flow-ai-inline-row {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.flow-ai-footer p,
+.flow-ai-inline-note,
+.flow-ai-summary {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.flow-ai-footer p {
+  max-width: 56ch;
+}
+
+.flow-ai-inline-row {
+  align-items: stretch;
+}
+
+.flow-ai-inline-row .flow-ai-textarea {
+  flex: 1;
+}
+
+.flow-ai-inline-actions {
+  width: 220px;
+  display: grid;
+  align-content: stretch;
+  gap: 10px;
+}
+
+.flow-ai-inline-actions .button {
+  justify-content: center;
+}
+
+.flow-ai-summary {
+  color: #dfe9ff;
 }
 
 .flow-browser-tray {
@@ -2623,6 +2731,16 @@ button {
 @media (max-width: 920px) {
   .studio-browser-meta {
     justify-self: start;
+  }
+
+  .flow-ai-footer,
+  .flow-ai-inline-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .flow-ai-inline-actions {
+    width: 100%;
   }
 
   .studio-browser-copy,

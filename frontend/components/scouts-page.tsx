@@ -7,6 +7,7 @@ import {
   createScout,
   deleteScout,
   type DashboardSnapshot,
+  generateFlowSuggestion,
   getScoutBuilder,
   type ScoutNode,
   type ScoutPreview,
@@ -281,6 +282,9 @@ export function ScoutsPage({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [scoutPreview, setScoutPreview] = useState<ScoutPreview | null>(null);
+  const [generationPrompt, setGenerationPrompt] = useState("");
+  const [generationSummary, setGenerationSummary] = useState<string | null>(null);
+  const [isGeneratingFlow, setIsGeneratingFlow] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const selectedScout = useMemo(
@@ -330,6 +334,8 @@ export function ScoutsPage({
   const verifierLabel = form.verifier_enabled
     ? linkedVerifier?.name || form.verifier_node_name || prettyLabel(form.verifier_platform)
     : "No verifier";
+  const flowGenerator = builder?.flow_generator ?? null;
+  const flowGeneratorReady = Boolean(flowGenerator?.enabled);
 
   const updateScheduleState = (changes: Partial<ScheduleState>) => {
     const nextState = { ...scheduleState, ...changes };
@@ -719,6 +725,39 @@ export function ScoutsPage({
     });
   };
 
+  const handleGenerateFlow = async () => {
+    if (!generationPrompt.trim()) {
+      setError("Describe the workflow you want to build first.");
+      return;
+    }
+    if (!flowGeneratorReady) {
+      setError("Configure Gemini in Settings before using AI flow generation.");
+      return;
+    }
+
+    setIsGeneratingFlow(true);
+    try {
+      const suggestion = await generateFlowSuggestion(generationPrompt);
+      const nextBuilder = await getScoutBuilder();
+      setBuilder(nextBuilder);
+      setSelectedScoutId("new");
+      setForm({ ...scoutToPayload(null), ...suggestion.payload });
+      setGenerationSummary(suggestion.summary || `Generated ${suggestion.name}`);
+      setNotice(`Generated draft flow: ${suggestion.name}`);
+      setError(null);
+      setInspectorNode(null);
+      setSelectedGraphBlockId(null);
+    } catch (generationError) {
+      setError(
+        generationError instanceof Error
+          ? generationError.message
+          : "Failed to generate flow",
+      );
+    } finally {
+      setIsGeneratingFlow(false);
+    }
+  };
+
   const handleRunScout = (scoutId: number, scoutName: string) => {
     startTransition(() => {
       runScout(scoutId)
@@ -1049,6 +1088,48 @@ export function ScoutsPage({
                     </button>
                   ) : null}
                 </div>
+                <div className={`flow-ai-planner ${flowGeneratorReady ? "" : "flow-ai-planner-locked"}`}>
+                  <div className="flow-ai-planner-head">
+                    <div>
+                      <p className="eyebrow">AI Flow Builder</p>
+                      <strong>Describe the workflow and let an agent draft the canvas.</strong>
+                    </div>
+                    <span className={`flow-ai-status ${flowGeneratorReady ? "ready" : "locked"}`}>
+                      {flowGeneratorReady ? "Ready" : "Setup required"}
+                    </span>
+                  </div>
+                  <textarea
+                    className="input textarea flow-ai-textarea"
+                    disabled={!flowGeneratorReady || isGeneratingFlow}
+                    onChange={(e) => setGenerationPrompt(e.target.value)}
+                    placeholder="Example: Watch AI Substacks and two Reddit communities, pool the signals every morning, turn them into concise X and Telegram drafts, and send them through Telegram review first."
+                    rows={4}
+                    value={generationPrompt}
+                  />
+                  <div className="flow-ai-footer">
+                    <p>
+                      {flowGeneratorReady
+                        ? "The planner uses the configured Gemini model to create draft nodes for the canvas."
+                        : flowGenerator?.missing_requirements?.[0] ?? "Configure Gemini in Settings to enable AI flow generation."}
+                    </p>
+                    <div className="button-row">
+                      {!flowGeneratorReady ? (
+                        <a className="button button-secondary" href={flowGenerator?.settings_path ?? "/settings"}>
+                          Open settings
+                        </a>
+                      ) : null}
+                      <button
+                        className="button button-primary"
+                        disabled={!flowGeneratorReady || !generationPrompt.trim() || isGeneratingFlow}
+                        onClick={handleGenerateFlow}
+                        type="button"
+                      >
+                        {isGeneratingFlow ? "Generating…" : "Generate canvas"}
+                      </button>
+                    </div>
+                  </div>
+                  {generationSummary ? <p className="flow-ai-summary">{generationSummary}</p> : null}
+                </div>
                 <div className="studio-empty-steps">
                   <div className="studio-step-card">
                     <span>1</span>
@@ -1188,6 +1269,49 @@ export function ScoutsPage({
               </div>
 
               <div className="board-stage">
+                <div className={`flow-ai-planner flow-ai-planner-inline ${flowGeneratorReady ? "" : "flow-ai-planner-locked"}`}>
+                  <div className="flow-ai-planner-head">
+                    <div>
+                      <p className="eyebrow">AI Flow Builder</p>
+                      <strong>Draft this canvas from a plain-English prompt.</strong>
+                    </div>
+                    <span className={`flow-ai-status ${flowGeneratorReady ? "ready" : "locked"}`}>
+                      {flowGeneratorReady ? "Agent ready" : "Setup required"}
+                    </span>
+                  </div>
+                  <div className="flow-ai-inline-row">
+                    <textarea
+                      className="input textarea flow-ai-textarea compact"
+                      disabled={!flowGeneratorReady || isGeneratingFlow}
+                      onChange={(e) => setGenerationPrompt(e.target.value)}
+                      placeholder="Describe the workflow you want to build. This will create a new draft canvas with scout, agent, policy, verifier, and output nodes as needed."
+                      rows={3}
+                      value={generationPrompt}
+                    />
+                    <div className="flow-ai-inline-actions">
+                      {!flowGeneratorReady ? (
+                        <a className="button button-secondary" href={flowGenerator?.settings_path ?? "/settings"}>
+                          Open settings
+                        </a>
+                      ) : null}
+                      <button
+                        className="button button-primary"
+                        disabled={!flowGeneratorReady || !generationPrompt.trim() || isGeneratingFlow}
+                        onClick={handleGenerateFlow}
+                        type="button"
+                      >
+                        {isGeneratingFlow ? "Generating…" : "Generate new draft"}
+                      </button>
+                    </div>
+                  </div>
+                  <p className="flow-ai-inline-note">
+                    {flowGeneratorReady
+                      ? "The planner runs through a Gemini-backed agent and creates draft nodes you can review before saving the flow."
+                      : flowGenerator?.missing_requirements?.[0] ?? "Configure Gemini in Settings to enable AI flow generation."}
+                  </p>
+                  {generationSummary ? <p className="flow-ai-summary">{generationSummary}</p> : null}
+                </div>
+
                 <div className="board-header">
                   <div>
                     <p className="eyebrow">Pipeline</p>

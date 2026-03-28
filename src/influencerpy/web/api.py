@@ -9,6 +9,7 @@ from influencerpy.web.services import (
     create_scout,
     create_scout_node,
     delete_scout_record,
+    generate_flow_suggestion,
     get_dashboard_snapshot,
     get_logs,
     get_scout_builder_snapshot,
@@ -59,6 +60,16 @@ def scouts() -> list[dict]:
 @app.get("/api/scout-builder")
 def scout_builder() -> dict:
     return get_scout_builder_snapshot()
+
+
+@app.post("/api/flow-suggestions")
+def flow_suggestions(payload: dict) -> dict:
+    try:
+        return generate_flow_suggestion(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/scout-nodes")

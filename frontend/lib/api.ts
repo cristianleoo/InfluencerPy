@@ -145,6 +145,13 @@ export type ScoutPayload = {
 
 export type ScoutBuilderSnapshot = {
   gemini_models: string[];
+  flow_generator: {
+    enabled: boolean;
+    provider: string;
+    model_id: string;
+    missing_requirements: string[];
+    settings_path: string;
+  };
   flow_policies: Array<{
     id: "as_it_comes" | "pool";
     label: string;
@@ -206,6 +213,19 @@ export type ScoutPreview = {
     summary: string | null;
     published_at: string | null;
   }>;
+};
+
+export type FlowSuggestion = {
+  name: string;
+  summary: string;
+  prompt: string;
+  payload: ScoutPayload;
+  nodes: {
+    scouts: ScoutBuilderSnapshot["nodes"]["scouts"];
+    agent: ScoutBuilderSnapshot["nodes"]["agents"][number];
+    channels: ScoutBuilderSnapshot["nodes"]["channels"];
+    verifier: ScoutBuilderSnapshot["nodes"]["verifiers"][number] | null;
+  };
 };
 
 export type Post = {
@@ -287,6 +307,13 @@ export function getDashboardSnapshot(): Promise<DashboardSnapshot> {
 
 export function getScoutBuilder(): Promise<ScoutBuilderSnapshot> {
   return request<ScoutBuilderSnapshot>("/scout-builder");
+}
+
+export function generateFlowSuggestion(prompt: string): Promise<FlowSuggestion> {
+  return request<FlowSuggestion>("/flow-suggestions", {
+    method: "POST",
+    body: JSON.stringify({ prompt }),
+  });
 }
 
 export function runScout(scoutId: number): Promise<unknown> {
