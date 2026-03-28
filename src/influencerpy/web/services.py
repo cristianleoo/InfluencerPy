@@ -89,6 +89,14 @@ SUPPORTED_FLOW_CHANNELS = {"telegram", "x", "substack"}
 SUPPORTED_SCOUT_TYPES = {"search", "rss", "reddit", "substack", "browser", "arxiv"}
 SUPPORTED_FLOW_POLICIES = {"as_it_comes", "pool"}
 SUPPORTED_AGENT_INTENTS = {"scouting", "generation"}
+CURATED_GEMINI_MODELS = [
+    "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+]
 
 
 def _safe_json_loads(raw: str | None, fallback: Any) -> Any:
@@ -98,6 +106,18 @@ def _safe_json_loads(raw: str | None, fallback: Any) -> Any:
         return json.loads(raw)
     except json.JSONDecodeError:
         return fallback
+
+
+def _dedupe_keep_order(values: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        value = str(raw or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
 
 
 def _extract_json_object(raw: str) -> dict[str, Any]:
@@ -1916,7 +1936,7 @@ def get_logs(lines: int = 100) -> dict[str, Any]:
 def get_gemini_models() -> list[str]:
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
-        return ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"]
+        return CURATED_GEMINI_MODELS.copy()
 
     try:
         response = requests.get(
@@ -1926,15 +1946,13 @@ def get_gemini_models() -> list[str]:
         )
         response.raise_for_status()
         data = response.json()
-        models = []
+        models: list[str] = []
         for model in data.get("models", []):
             name = model.get("name", "")
-            supported_methods = model.get("supportedGenerationMethods", [])
             if not name.startswith("models/gemini"):
                 continue
-            if "generateContent" not in supported_methods:
-                continue
             models.append(name.replace("models/", ""))
-        return sorted(set(models))
+        merged = _dedupe_keep_order(models + CURATED_GEMINI_MODELS)
+        return merged[:20]
     except Exception:
-        return ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"]
+        return CURATED_GEMINI_MODELS.copy()
