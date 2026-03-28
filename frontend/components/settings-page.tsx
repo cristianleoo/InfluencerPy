@@ -4,11 +4,8 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 
 import { getSettings, saveSettings, type SettingsSnapshot } from "../lib/api";
 import {
-  ActivityIcon,
   ComposeIcon,
-  RadarIcon,
   ReviewIcon,
-  SettingsIcon,
   SparkIcon,
 } from "./icons";
 
@@ -18,6 +15,9 @@ type IntegrationCardProps = {
   description: string;
   configured: boolean;
   optional?: boolean;
+  enabled?: boolean;
+  enabledLabel?: string;
+  onToggleEnabled?: (enabled: boolean) => void;
   children: React.ReactNode;
 };
 
@@ -27,6 +27,9 @@ function IntegrationCard({
   description,
   configured,
   optional = true,
+  enabled = true,
+  enabledLabel,
+  onToggleEnabled,
   children,
 }: IntegrationCardProps) {
   return (
@@ -41,7 +44,23 @@ function IntegrationCard({
           {configured ? "Connected" : optional ? "Optional" : "Required"}
         </span>
       </div>
-      <div className="settings-stack">{children}</div>
+      {onToggleEnabled ? (
+        <label className="settings-enable-row">
+          <input
+            checked={enabled}
+            onChange={(event) => onToggleEnabled(event.target.checked)}
+            type="checkbox"
+          />
+          <span>{enabledLabel ?? `Set up ${title} now`}</span>
+        </label>
+      ) : null}
+      {enabled ? (
+        <div className="settings-stack">{children}</div>
+      ) : (
+        <div className="settings-collapsed-note">
+          Leave this disconnected for now. You can come back later when you want to enable it.
+        </div>
+      )}
     </article>
   );
 }
@@ -79,6 +98,13 @@ export function SettingsPage({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [optionalSetup, setOptionalSetup] = useState({
+    telegram: initialSettings?.credentials.telegram ?? false,
+    x: initialSettings?.credentials.x ?? false,
+    substack: initialSettings?.credentials.substack ?? false,
+    stability: initialSettings?.credentials.stability ?? false,
+    langfuse: initialSettings?.credentials.langfuse ?? false,
+  });
 
   const storageIssues = settings
     ? [
@@ -119,6 +145,13 @@ export function SettingsPage({
         substackSubdomain: data.values.substack_subdomain ?? "",
         langfuseHost: data.values.langfuse_host ?? "",
       }));
+      setOptionalSetup({
+        telegram: data.credentials.telegram,
+        x: data.credentials.x,
+        substack: data.credentials.substack,
+        stability: data.credentials.stability,
+        langfuse: data.credentials.langfuse,
+      });
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load settings");
@@ -369,6 +402,11 @@ export function SettingsPage({
                 description="Recommended if you want draft review or delivery through Telegram. Set this up after Gemini is ready."
                 eyebrow="Telegram"
                 title="Connect Telegram"
+                enabled={optionalSetup.telegram}
+                enabledLabel="Set up Telegram now"
+                onToggleEnabled={(enabled) =>
+                  setOptionalSetup((current) => ({ ...current, telegram: enabled }))
+                }
               >
                 <label className="field">
                   <span>Telegram bot token</span>
@@ -396,6 +434,11 @@ export function SettingsPage({
                 description="Only needed if you want to publish directly to X. You can leave this disconnected while you build flows."
                 eyebrow="X"
                 title="Connect X publishing"
+                enabled={optionalSetup.x}
+                enabledLabel="Set up X now"
+                onToggleEnabled={(enabled) =>
+                  setOptionalSetup((current) => ({ ...current, x: enabled }))
+                }
               >
                 <label className="field">
                   <span>X API key</span>
@@ -443,6 +486,11 @@ export function SettingsPage({
                 description="Connect this only if you want to publish or draft directly to Substack."
                 eyebrow="Substack"
                 title="Connect Substack"
+                enabled={optionalSetup.substack}
+                enabledLabel="Set up Substack now"
+                onToggleEnabled={(enabled) =>
+                  setOptionalSetup((current) => ({ ...current, substack: enabled }))
+                }
               >
                 <label className="field">
                   <span>Substack subdomain</span>
@@ -493,6 +541,11 @@ export function SettingsPage({
                 description="Only needed if you want image generation in flows or generated posts."
                 eyebrow="Stability"
                 title="Connect Stability AI"
+                enabled={optionalSetup.stability}
+                enabledLabel="Set up Stability AI now"
+                onToggleEnabled={(enabled) =>
+                  setOptionalSetup((current) => ({ ...current, stability: enabled }))
+                }
               >
                 <label className="field">
                   <span>Stability API key</span>
@@ -511,6 +564,11 @@ export function SettingsPage({
                 description="Use Langfuse only if you want traces and telemetry for runs."
                 eyebrow="Langfuse"
                 title="Connect Langfuse"
+                enabled={optionalSetup.langfuse}
+                enabledLabel="Set up Langfuse now"
+                onToggleEnabled={(enabled) =>
+                  setOptionalSetup((current) => ({ ...current, langfuse: enabled }))
+                }
               >
                 <label className="field">
                   <span>Langfuse host</span>
