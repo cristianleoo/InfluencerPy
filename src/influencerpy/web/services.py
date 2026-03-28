@@ -145,6 +145,34 @@ def _flow_generator_status() -> dict[str, Any]:
     }
 
 
+def _safe_load_settings_env() -> bool:
+    try:
+        if ENV_FILE.exists():
+            if not os.access(ENV_FILE, os.R_OK):
+                return False
+            load_dotenv(dotenv_path=ENV_FILE, override=True)
+        return True
+    except PermissionError:
+        return False
+
+
+def _ensure_settings_storage_writable() -> None:
+    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+    if CONFIG_FILE.exists() and not os.access(CONFIG_FILE, os.W_OK):
+        raise RuntimeError(
+            f"Settings storage is not writable: {CONFIG_FILE}. Fix file permissions and try again."
+        )
+    if ENV_FILE.exists() and not os.access(ENV_FILE, os.W_OK):
+        raise RuntimeError(
+            f"Settings storage is not writable: {ENV_FILE}. Fix file permissions and try again."
+        )
+    if not ENV_FILE.exists() and not os.access(ENV_FILE.parent, os.W_OK):
+        raise RuntimeError(
+            f"Settings storage directory is not writable: {ENV_FILE.parent}. Fix file permissions and try again."
+        )
+
+
 def serialize_post(post: PostModel, scout_name: str | None = None) -> dict[str, Any]:
     return {
         "id": post.id,
@@ -1777,11 +1805,16 @@ def create_quick_post(
 def get_settings_snapshot() -> dict[str, Any]:
     config_manager = ConfigManager()
     config_manager.ensure_config_exists()
-    load_dotenv(dotenv_path=ENV_FILE, override=True)
+    env_loaded = _safe_load_settings_env()
 
     return {
         "config_file": str(CONFIG_FILE),
         "env_file": str(ENV_FILE),
+        "storage": {
+            "env_readable": env_loaded,
+            "env_writable": os.access(ENV_FILE, os.W_OK) if ENV_FILE.exists() else os.access(ENV_FILE.parent, os.W_OK),
+            "config_writable": os.access(CONFIG_FILE, os.W_OK) if CONFIG_FILE.exists() else os.access(CONFIG_FILE.parent, os.W_OK),
+        },
         "ai": {
             "default_provider": config_manager.get("ai.default_provider", "gemini"),
             "gemini_model": config_manager.get("ai.providers.gemini.default_model", "gemini-2.5-flash"),
@@ -1819,7 +1852,7 @@ def get_settings_snapshot() -> dict[str, Any]:
 def update_settings(payload: dict[str, Any]) -> dict[str, Any]:
     config_manager = ConfigManager()
     config_manager.ensure_config_exists()
-    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_settings_storage_writable()
     ENV_FILE.touch(exist_ok=True)
 
     ai = payload.get("ai", {})
@@ -1858,7 +1891,7 @@ def update_settings(payload: dict[str, Any]) -> dict[str, Any]:
             set_key(ENV_FILE, env_key, value)
             os.environ[env_key] = value
 
-    load_dotenv(dotenv_path=ENV_FILE, override=True)
+    _safe_load_settings_env()
     return get_settings_snapshot()
 
 
