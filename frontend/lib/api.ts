@@ -1,9 +1,41 @@
 const PUBLIC_BASE_PATH =
   process.env.NEXT_PUBLIC_BASE_PATH?.replace(/\/+$/, "") ?? "";
 
-const API_BASE_URL =
+const RAW_API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
   (PUBLIC_BASE_PATH ? `${PUBLIC_BASE_PATH}/api` : "http://127.0.0.1:8000/api");
+
+function isUnsafePublicApiBaseUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.hostname === "0.0.0.0" ||
+      url.hostname === "127.0.0.1" ||
+      url.hostname === "localhost"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function getApiBaseUrl(): string {
+  if (typeof window === "undefined") {
+    return RAW_API_BASE_URL;
+  }
+
+  if (RAW_API_BASE_URL.startsWith("/")) {
+    return RAW_API_BASE_URL;
+  }
+
+  if (
+    window.location.protocol === "https:" &&
+    isUnsafePublicApiBaseUrl(RAW_API_BASE_URL)
+  ) {
+    return `${PUBLIC_BASE_PATH}/api`;
+  }
+
+  return RAW_API_BASE_URL;
+}
 
 export type Scout = {
   id: number;
@@ -232,7 +264,7 @@ export type SettingsSnapshot = {
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
