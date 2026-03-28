@@ -215,3 +215,5 @@ uv.lock
 bot.pid
 frontend/.next/
 frontend/node_modules/
+!frontend/lib/
+!frontend/lib/**
