@@ -1,5 +1,9 @@
+const PUBLIC_BASE_PATH =
+  process.env.NEXT_PUBLIC_BASE_PATH?.replace(/\/+$/, "") ?? "";
+
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:8000/api";
+  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ??
+  (PUBLIC_BASE_PATH ? `${PUBLIC_BASE_PATH}/api` : "http://127.0.0.1:8000/api");
 
 export type Scout = {
   id: number;
