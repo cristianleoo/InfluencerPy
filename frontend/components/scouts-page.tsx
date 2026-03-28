@@ -532,6 +532,20 @@ export function ScoutsPage({
   }, []);
 
   useEffect(() => {
+    if (initialSnapshot) {
+      return;
+    }
+
+    refresh().catch((refreshError) => {
+      setError(
+        refreshError instanceof Error
+          ? refreshError.message
+          : "Failed to load flows",
+      );
+    });
+  }, [initialSnapshot]);
+
+  useEffect(() => {
     if (selectedScoutId !== "new" || !builder || form.tools.length > 0) {
       return;
     }

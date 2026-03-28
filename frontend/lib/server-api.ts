@@ -17,18 +17,13 @@ function normalizeServerApiBaseUrl(value: string | undefined): string | null {
 
   try {
     const url = new URL(trimmed);
-    if (
-      url.hostname === "0.0.0.0" ||
-      url.hostname === "127.0.0.1" ||
-      url.hostname === "localhost"
-    ) {
-      return null;
+    if (url.hostname === "0.0.0.0" || url.hostname === "localhost") {
+      url.hostname = "127.0.0.1";
     }
+    return url.toString().replace(/\/$/, "");
   } catch {
     return trimmed;
   }
-
-  return trimmed;
 }
 
 async function getServerApiBaseUrl(): Promise<string> {
