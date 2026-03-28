@@ -16,6 +16,8 @@ class PostModel(SQLModel, table=True):
     posted_at: Optional[datetime] = None
     external_id: Optional[str] = None
     scout_id: Optional[int] = Field(default=None, foreign_key="scouts.id")
+    role: str = Field(default="delivery")  # delivery or verification
+    delivery_targets_json: str = Field(default="[]")  # JSON list of final target platforms
 
 class NewsItemModel(SQLModel, table=True):
     """Database model for seen news items."""

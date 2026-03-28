@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Sans, Space_Grotesk } from "next/font/google";
 
 import { AppShell } from "../components/app-shell";
@@ -18,6 +18,12 @@ const bodyFont = IBM_Plex_Sans({
 export const metadata: Metadata = {
   title: "InfluencerPy Control Room",
   description: "Modern dashboard for scouts, drafts, and publishing workflows.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

@@ -78,7 +78,9 @@ export function ReviewsPage({
               <div className="review-head">
                 <span>{post.scout_name || "Manual draft"}</span>
                 <span className={`mini-status ${statusTone(post.status)}`}>
-                  {prettyLabel(post.platform)} • {prettyLabel(post.status)}
+                  {prettyLabel(post.platform)} • {post.role === "verification"
+                    ? `Verify for ${post.delivery_targets.map(prettyLabel).join(", ")}`
+                    : prettyLabel(post.status)}
                 </span>
               </div>
               <p>{post.content}</p>

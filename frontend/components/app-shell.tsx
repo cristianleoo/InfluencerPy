@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useCallback, useEffect, useId, useState } from "react";
 import {
   ActivityIcon,
   ComposeIcon,
@@ -22,42 +23,162 @@ const navigation = [
   { href: "/logs", label: "Logs", detail: "Runtime", icon: LogsIcon },
 ];
 
+const MOBILE_NAV_MQ = "(max-width: 920px)";
+
+function MenuIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M4 7h16M4 12h16M4 17h16"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function CloseIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function useIsMobileNav() {
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_NAV_MQ);
+    const sync = () => setIsMobile(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
+  return isMobile;
+}
+
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [navOpen, setNavOpen] = useState(false);
+  const navId = useId();
+  const isMobileNav = useIsMobileNav();
+
+  const closeNav = useCallback(() => setNavOpen(false), []);
+
+  useEffect(() => {
+    closeNav();
+  }, [pathname, closeNav]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeNav();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [closeNav]);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    const mq = window.matchMedia(MOBILE_NAV_MQ);
+    const onChange = () => {
+      if (!mq.matches) closeNav();
+    };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [navOpen, closeNav]);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    const mq = window.matchMedia(MOBILE_NAV_MQ);
+    if (!mq.matches) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [navOpen]);
+
+  const current = navigation.find((item) => item.href === pathname);
+  const pageTitle = current?.label ?? "Overview";
 
   return (
     <div className="app-frame">
-      <aside className="sidebar">
+      <header className="mobile-header">
+        <button
+          type="button"
+          className="mobile-menu-btn"
+          aria-expanded={navOpen}
+          aria-controls={navId}
+          onClick={() => setNavOpen((o) => !o)}
+        >
+          <MenuIcon />
+          <span className="sr-only">{navOpen ? "Close menu" : "Open menu"}</span>
+        </button>
+        <div className="mobile-header-titles">
+          <p className="eyebrow mobile-header-eyebrow">InfluencerPy</p>
+          <p className="mobile-header-title">{pageTitle}</p>
+        </div>
+        <span className="mobile-header-spacer" aria-hidden />
+      </header>
+
+      {navOpen ? (
+        <button
+          type="button"
+          className="drawer-backdrop"
+          aria-label="Close menu"
+          onClick={closeNav}
+        />
+      ) : null}
+
+      <aside
+        className={`sidebar ${navOpen ? "nav-drawer-open" : ""}`}
+        id={navId}
+        aria-hidden={isMobileNav && !navOpen ? true : undefined}
+        inert={isMobileNav && !navOpen ? true : undefined}
+      >
         <div className="sidebar-brand">
-          <div className="brand-mark">
-            <svg
-              aria-hidden="true"
-              className="brand-mark-icon"
-              fill="none"
-              viewBox="0 0 72 72"
-              xmlns="http://www.w3.org/2000/svg"
-            >
-              <circle cx="36" cy="36" r="24" stroke="currentColor" strokeOpacity="0.28" strokeWidth="2.5" />
-              <circle cx="36" cy="36" r="12" stroke="currentColor" strokeOpacity="0.55" strokeWidth="2.5" />
-              <path d="M36 36 52 25" stroke="currentColor" strokeLinecap="round" strokeWidth="3.2" />
-              <circle cx="52" cy="25" r="4.5" fill="currentColor" />
-              <path
-                d="M16 50C23 44 29 41 36 40C45 39 52 42 58 47"
-                stroke="url(#brandTrail)"
-                strokeLinecap="round"
-                strokeWidth="4"
-              />
-              <defs>
-                <linearGradient id="brandTrail" x1="16" y1="50" x2="58" y2="47" gradientUnits="userSpaceOnUse">
-                  <stop stopColor="#37D5FF" />
-                  <stop offset="1" stopColor="#FFBB4D" />
-                </linearGradient>
-              </defs>
-            </svg>
-          </div>
-          <div>
-            <p className="eyebrow">InfluencerPy</p>
-            <h1>Workflow OS</h1>
+          <button
+            type="button"
+            className="sidebar-drawer-close"
+            aria-label="Close menu"
+            onClick={closeNav}
+          >
+            <CloseIcon />
+          </button>
+          <div className="sidebar-brand-main">
+            <div className="brand-mark">
+              <svg
+                aria-hidden="true"
+                className="brand-mark-icon"
+                fill="none"
+                viewBox="0 0 72 72"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <circle cx="36" cy="36" r="24" stroke="currentColor" strokeOpacity="0.28" strokeWidth="2.5" />
+                <circle cx="36" cy="36" r="12" stroke="currentColor" strokeOpacity="0.55" strokeWidth="2.5" />
+                <path d="M36 36 52 25" stroke="currentColor" strokeLinecap="round" strokeWidth="3.2" />
+                <circle cx="52" cy="25" r="4.5" fill="currentColor" />
+                <path
+                  d="M16 50C23 44 29 41 36 40C45 39 52 42 58 47"
+                  stroke="url(#brandTrail)"
+                  strokeLinecap="round"
+                  strokeWidth="4"
+                />
+                <defs>
+                  <linearGradient id="brandTrail" x1="16" y1="50" x2="58" y2="47" gradientUnits="userSpaceOnUse">
+                    <stop stopColor="#37D5FF" />
+                    <stop offset="1" stopColor="#FFBB4D" />
+                  </linearGradient>
+                </defs>
+              </svg>
+            </div>
+            <div>
+              <p className="eyebrow">InfluencerPy</p>
+              <h1>Workflow OS</h1>
+            </div>
           </div>
         </div>
 
@@ -76,6 +197,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 className={`nav-link ${isActive ? "active" : ""}`}
                 href={item.href}
                 key={item.href}
+                onClick={closeNav}
               >
                 <span className="nav-icon-wrap">
                   <Icon className="nav-icon" />
@@ -99,16 +221,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="content-frame">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">Workspace</p>
-            <p className="topbar-title">
-              {navigation.find((item) => item.href === pathname)?.label ?? "Overview"}
-            </p>
-          </div>
-          <div className="topbar-chip">Automation studio</div>
-        </header>
-
         <div className="content-area">{children}</div>
       </div>
     </div>

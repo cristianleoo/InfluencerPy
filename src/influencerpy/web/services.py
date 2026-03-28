@@ -106,6 +106,8 @@ def serialize_post(post: PostModel, scout_name: str | None = None) -> dict[str, 
         "external_id": post.external_id,
         "scout_id": post.scout_id,
         "scout_name": scout_name,
+        "role": post.role or "delivery",
+        "delivery_targets": _safe_json_loads(post.delivery_targets_json, []),
     }
 
 
@@ -152,14 +154,35 @@ def serialize_agent_node(node: AgentNodeModel) -> dict[str, Any]:
 
 def serialize_channel_node(node: ChannelNodeModel) -> dict[str, Any]:
     config = _safe_json_loads(node.config_json, {})
+    kind = config.get("kind", "channel")
     return {
         "id": node.id,
         "name": node.name,
         "platforms": _safe_json_loads(node.platforms, []),
         "telegram_review": node.telegram_review,
         "created_at": node.created_at.isoformat() if node.created_at else None,
+        "kind": kind,
         "config": config,
     }
+
+
+def _channel_node_kind(node: ChannelNodeModel) -> str:
+    config = _safe_json_loads(node.config_json, {})
+    kind = config.get("kind", "channel")
+    return kind if kind in {"channel", "verifier"} else "channel"
+
+
+def _split_delivery_nodes(
+    channel_nodes: list[ChannelNodeModel],
+) -> tuple[ChannelNodeModel | None, list[ChannelNodeModel]]:
+    verifier_node: ChannelNodeModel | None = None
+    delivery_nodes: list[ChannelNodeModel] = []
+    for node in channel_nodes:
+        if _channel_node_kind(node) == "verifier":
+            verifier_node = verifier_node or node
+            continue
+        delivery_nodes.append(node)
+    return verifier_node, delivery_nodes
 
 
 def _serialize_flow(
@@ -169,13 +192,14 @@ def _serialize_flow(
     channel_nodes: list[ChannelNodeModel],
 ) -> dict[str, Any]:
     primary_scout = scout_nodes[0]
-    primary_channel = channel_nodes[0]
+    verifier_node, delivery_nodes = _split_delivery_nodes(channel_nodes)
+    primary_channel = delivery_nodes[0] if delivery_nodes else channel_nodes[0]
     scout_config = _safe_json_loads(primary_scout.config_json, {})
     agent_config = _safe_json_loads(agent_node.config_json, {})
     channel_platforms = sorted(
         {
             platform
-            for node in channel_nodes
+            for node in delivery_nodes
             for platform in _safe_json_loads(node.platforms, [])
         }
     )
@@ -191,8 +215,12 @@ def _serialize_flow(
         "schedule_cron": primary_scout.schedule_cron,
         "last_run": primary_scout.last_run.isoformat() if primary_scout.last_run else None,
         "created_at": flow.created_at.isoformat() if flow.created_at else None,
-        "telegram_review": any(node.telegram_review for node in channel_nodes),
+        "telegram_review": verifier_node is not None,
         "platforms": channel_platforms,
+        "delivery_platforms": channel_platforms,
+        "verifier_platform": (
+            _safe_json_loads(verifier_node.platforms, [None])[0] if verifier_node else None
+        ),
         "config": config,
         "flow": {
             "id": flow.id,
@@ -203,8 +231,9 @@ def _serialize_flow(
             "scout": serialize_scout_node(primary_scout),
             "scouts": [serialize_scout_node(node) for node in scout_nodes],
             "agent": serialize_agent_node(agent_node),
+            "verifier": serialize_channel_node(verifier_node) if verifier_node else None,
             "channel": serialize_channel_node(primary_channel),
-            "channels": [serialize_channel_node(node) for node in channel_nodes],
+            "channels": [serialize_channel_node(node) for node in delivery_nodes],
         },
     }
 
@@ -445,7 +474,8 @@ def _upsert_legacy_scout_for_flow(
     flow_name: str,
     scout_node: ScoutNodeModel,
     agent_node: AgentNodeModel,
-    channel_nodes: list[ChannelNodeModel],
+    delivery_nodes: list[ChannelNodeModel],
+    verifier_node: ChannelNodeModel | None = None,
     legacy_scout: ScoutModel | None = None,
 ) -> ScoutModel:
     scout_config = _safe_json_loads(scout_node.config_json, {})
@@ -454,11 +484,11 @@ def _upsert_legacy_scout_for_flow(
     merged_platforms = sorted(
         {
             platform
-            for channel_node in channel_nodes
+            for channel_node in delivery_nodes
             for platform in _safe_json_loads(channel_node.platforms, [])
         }
     )
-    telegram_review = any(channel_node.telegram_review for channel_node in channel_nodes)
+    telegram_review = verifier_node is not None
 
     if legacy_scout is None:
         legacy_scout = ScoutModel(
@@ -582,12 +612,18 @@ def _extract_flow_scout_ids(payload: dict[str, Any], primary_scout_id: int | Non
     return ordered_unique
 
 
-def _extract_flow_channel_ids(payload: dict[str, Any], primary_channel_id: int | None = None) -> list[int]:
+def _extract_flow_channel_ids(
+    payload: dict[str, Any],
+    primary_channel_id: int | None = None,
+    verifier_node_id: int | None = None,
+) -> list[int]:
     selected = [int(item) for item in payload.get("channel_node_ids", []) if item]
     if payload.get("channel_node_id"):
         selected.insert(0, int(payload["channel_node_id"]))
     if primary_channel_id is not None:
         selected.insert(0, int(primary_channel_id))
+    if verifier_node_id is not None:
+        selected.append(int(verifier_node_id))
     ordered_unique: list[int] = []
     for value in selected:
         if value not in ordered_unique:
@@ -600,7 +636,8 @@ def _apply_runtime_scout_config(
     flow_name: str,
     scout_node: ScoutNodeModel,
     agent_node: AgentNodeModel,
-    channel_nodes: list[ChannelNodeModel],
+    delivery_nodes: list[ChannelNodeModel],
+    verifier_node: ChannelNodeModel | None = None,
     *,
     runtime_name: str | None = None,
 ) -> ScoutModel:
@@ -616,12 +653,12 @@ def _apply_runtime_scout_config(
         sorted(
             {
                 platform
-                for channel_node in channel_nodes
+                for channel_node in delivery_nodes
                 for platform in _safe_json_loads(channel_node.platforms, [])
             }
         )
     )
-    scout.telegram_review = any(channel_node.telegram_review for channel_node in channel_nodes)
+    scout.telegram_review = verifier_node is not None
     return scout
 
 
@@ -682,6 +719,10 @@ def _dedupe_content_items(items: list[ContentItem]) -> list[ContentItem]:
 
 def get_scout_builder_snapshot() -> dict[str, Any]:
     with next(get_session()) as session:
+        channel_nodes = [
+            node
+            for node in session.exec(select(ChannelNodeModel).order_by(ChannelNodeModel.created_at.desc())).all()
+        ]
         return {
             "gemini_models": get_gemini_models(),
             "flow_policies": [
@@ -707,9 +748,15 @@ def get_scout_builder_snapshot() -> dict[str, Any]:
                     serialize_agent_node(node)
                     for node in session.exec(select(AgentNodeModel).order_by(AgentNodeModel.created_at.desc())).all()
                 ],
+                "verifiers": [
+                    serialize_channel_node(node)
+                    for node in channel_nodes
+                    if _channel_node_kind(node) == "verifier"
+                ],
                 "channels": [
                     serialize_channel_node(node)
-                    for node in session.exec(select(ChannelNodeModel).order_by(ChannelNodeModel.created_at.desc())).all()
+                    for node in channel_nodes
+                    if _channel_node_kind(node) != "verifier"
                 ],
             },
         }
@@ -828,15 +875,41 @@ def create_scout(payload: dict[str, Any]) -> dict[str, Any]:
             channel_node = ChannelNodeModel(
                 name=payload.get("channel_node_name") or f"{payload['name']} Channel",
                 platforms=json.dumps(payload.get("platforms", ["telegram"])),
-                telegram_review=payload.get("telegram_review", False),
-                config_json=json.dumps({}),
+                telegram_review=False,
+                config_json=json.dumps({"kind": "channel"}),
             )
             session.add(channel_node)
             session.flush()
+        else:
+            channel_node.telegram_review = False
+            channel_node.config_json = json.dumps({"kind": "channel"})
+            session.add(channel_node)
 
-        channel_nodes = [channel_node]
+        verifier_node = None
+        if payload.get("verifier_enabled"):
+            verifier_node = (
+                session.get(ChannelNodeModel, payload["verifier_node_id"])
+                if payload.get("verifier_node_id")
+                else None
+            )
+            if verifier_node is None:
+                verifier_node = ChannelNodeModel(
+                    name=payload.get("verifier_node_name") or f"{payload['name']} Verifier",
+                    platforms=json.dumps([payload.get("verifier_platform", "telegram")]),
+                    telegram_review=False,
+                    config_json=json.dumps({"kind": "verifier"}),
+                )
+                session.add(verifier_node)
+                session.flush()
+            else:
+                verifier_node.name = payload.get("verifier_node_name") or verifier_node.name
+                verifier_node.platforms = json.dumps([payload.get("verifier_platform", "telegram")])
+                verifier_node.config_json = json.dumps({"kind": "verifier"})
+                session.add(verifier_node)
+
+        delivery_nodes = [channel_node]
         legacy_scout = _upsert_legacy_scout_for_flow(
-            session, payload["name"], scout_node, agent_node, channel_nodes
+            session, payload["name"], scout_node, agent_node, delivery_nodes, verifier_node
         )
         flow = FlowModel(
             name=payload["name"],
@@ -848,20 +921,39 @@ def create_scout(payload: dict[str, Any]) -> dict[str, Any]:
         session.add(flow)
         session.flush()
         _sync_flow_scout_links(session, flow, _extract_flow_scout_ids(payload, scout_node.id))
-        _sync_flow_channel_links(session, flow, _extract_flow_channel_ids(payload, channel_node.id))
+        _sync_flow_channel_links(
+            session,
+            flow,
+            _extract_flow_channel_ids(
+                payload,
+                channel_node.id,
+                verifier_node.id if verifier_node and verifier_node.id is not None else None,
+            ),
+        )
         session.commit()
         session.refresh(flow)
         scout_nodes = _get_flow_scout_nodes(session, [flow.id]).get(flow.id, [scout_node])
-        channel_nodes = _get_flow_channel_nodes(session, [flow.id]).get(flow.id, [channel_node])
-        _upsert_legacy_scout_for_flow(session, payload["name"], scout_node, agent_node, channel_nodes, legacy_scout)
+        linked_channel_nodes = _get_flow_channel_nodes(session, [flow.id]).get(flow.id, [channel_node])
+        linked_verifier, linked_delivery_nodes = _split_delivery_nodes(linked_channel_nodes)
+        _upsert_legacy_scout_for_flow(
+            session,
+            payload["name"],
+            scout_node,
+            agent_node,
+            linked_delivery_nodes,
+            linked_verifier,
+            legacy_scout,
+        )
         session.commit()
         _subscribe_rss_feeds_for_flow(legacy_scout.id, scout_nodes)
-        return _serialize_flow(flow, scout_nodes, agent_node, channel_nodes)
+        return _serialize_flow(flow, scout_nodes, agent_node, linked_channel_nodes)
 
 
 def update_scout_record(scout_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     with next(get_session()) as session:
         flow, scout_node, agent_node, channel_node = _get_flow_bundle(session, scout_id)
+        linked_channel_nodes = _get_flow_channel_nodes(session, [flow.id]).get(flow.id, [channel_node])
+        current_verifier_node, _ = _split_delivery_nodes(linked_channel_nodes)
 
         if payload.get("name") and payload["name"] != flow.name:
             existing_flow = session.exec(select(FlowModel).where(FlowModel.name == payload["name"])).first()
@@ -901,34 +993,77 @@ def update_scout_record(scout_id: int, payload: dict[str, Any]) -> dict[str, Any
         if replacement_channel is channel_node:
             channel_node.name = payload.get("channel_node_name", channel_node.name)
             channel_node.platforms = json.dumps(payload.get("platforms", ["telegram"]))
-            channel_node.telegram_review = payload.get("telegram_review", channel_node.telegram_review)
+            channel_node.telegram_review = False
+            channel_node.config_json = json.dumps({"kind": "channel"})
         else:
             flow.channel_node_id = replacement_channel.id
             channel_node = replacement_channel
+            channel_node.config_json = json.dumps({"kind": "channel"})
+
+        verifier_node = None
+        if payload.get("verifier_enabled"):
+            verifier_node = (
+                session.get(ChannelNodeModel, payload["verifier_node_id"])
+                if payload.get("verifier_node_id")
+                else current_verifier_node
+            )
+            if verifier_node is None:
+                verifier_node = ChannelNodeModel(
+                    name=payload.get("verifier_node_name") or f"{flow.name} Verifier",
+                    platforms=json.dumps([payload.get("verifier_platform", "telegram")]),
+                    telegram_review=False,
+                    config_json=json.dumps({"kind": "verifier"}),
+                )
+                session.add(verifier_node)
+                session.flush()
+            else:
+                verifier_node.name = payload.get("verifier_node_name") or verifier_node.name
+                verifier_node.platforms = json.dumps([payload.get("verifier_platform", "telegram")])
+                verifier_node.telegram_review = False
+                verifier_node.config_json = json.dumps({"kind": "verifier"})
+                session.add(verifier_node)
 
         flow.updated_at = datetime.utcnow()
 
         legacy_scout = session.get(ScoutModel, flow.legacy_scout_id) if flow.legacy_scout_id else None
-        channel_nodes = _get_flow_channel_nodes(session, [flow.id]).get(flow.id, [channel_node])
-        if replacement_channel is not channel_node:
-            channel_nodes = [replacement_channel]
-        else:
-            channel_nodes = [channel_node]
         legacy_scout = _upsert_legacy_scout_for_flow(
-            session, flow.name, scout_node, agent_node, channel_nodes, legacy_scout
+            session,
+            flow.name,
+            scout_node,
+            agent_node,
+            [channel_node],
+            verifier_node,
+            legacy_scout,
         )
         flow.legacy_scout_id = legacy_scout.id
         session.add(flow)
         _sync_flow_scout_links(session, flow, _extract_flow_scout_ids(payload, scout_node.id))
-        _sync_flow_channel_links(session, flow, _extract_flow_channel_ids(payload, channel_node.id))
+        _sync_flow_channel_links(
+            session,
+            flow,
+            _extract_flow_channel_ids(
+                payload,
+                channel_node.id,
+                verifier_node.id if verifier_node and verifier_node.id is not None else None,
+            ),
+        )
         session.commit()
         session.refresh(flow)
         scout_nodes = _get_flow_scout_nodes(session, [flow.id]).get(flow.id, [scout_node])
-        channel_nodes = _get_flow_channel_nodes(session, [flow.id]).get(flow.id, [channel_node])
-        _upsert_legacy_scout_for_flow(session, flow.name, scout_node, agent_node, channel_nodes, legacy_scout)
+        linked_channel_nodes = _get_flow_channel_nodes(session, [flow.id]).get(flow.id, [channel_node])
+        linked_verifier, linked_delivery_nodes = _split_delivery_nodes(linked_channel_nodes)
+        _upsert_legacy_scout_for_flow(
+            session,
+            flow.name,
+            scout_node,
+            agent_node,
+            linked_delivery_nodes,
+            linked_verifier,
+            legacy_scout,
+        )
         session.commit()
         _subscribe_rss_feeds_for_flow(legacy_scout.id, scout_nodes)
-        return _serialize_flow(flow, scout_nodes, agent_node, channel_nodes)
+        return _serialize_flow(flow, scout_nodes, agent_node, linked_channel_nodes)
 
 
 def delete_scout_record(scout_id: int) -> dict[str, Any]:
@@ -973,6 +1108,7 @@ def run_scout_workflow(scout_id: int) -> dict[str, Any]:
             flow, scout_node, agent_node, channel_node = _get_flow_bundle(session, scout_id)
             scout_nodes = _get_flow_scout_nodes(session, [flow.id]).get(flow.id, [scout_node])
             channel_nodes = _get_flow_channel_nodes(session, [flow.id]).get(flow.id, [channel_node])
+            verifier_node, delivery_nodes = _split_delivery_nodes(channel_nodes)
             legacy_scout = manager.session.get(ScoutModel, flow.legacy_scout_id) if flow.legacy_scout_id else None
             if not legacy_scout:
                 raise KeyError(f"Legacy scout for flow {scout_id} not found")
@@ -989,7 +1125,8 @@ def run_scout_workflow(scout_id: int) -> dict[str, Any]:
                     flow.name,
                     current_scout_node,
                     agent_node,
-                    channel_nodes,
+                    delivery_nodes,
+                    verifier_node,
                     runtime_name=runtime_name,
                 )
                 manager.session.add(legacy_scout)
@@ -1028,7 +1165,8 @@ def run_scout_workflow(scout_id: int) -> dict[str, Any]:
                 flow.name,
                 scout_nodes[0],
                 agent_node,
-                channel_nodes,
+                delivery_nodes,
+                verifier_node,
             )
             legacy_scout.last_run = datetime.utcnow()
             manager.session.add(legacy_scout)
@@ -1062,35 +1200,62 @@ def run_scout_workflow(scout_id: int) -> dict[str, Any]:
             delivery_platforms = sorted(
                 {
                     platform
-                    for current_channel_node in channel_nodes
+                    for current_channel_node in delivery_nodes
                     for platform in _safe_json_loads(current_channel_node.platforms, [])
                 }
             ) or ["telegram"]
-            for platform in delivery_platforms:
+            if verifier_node:
                 created_posts.append(
                     PostModel(
                         content=content,
-                        platform=platform,
+                        platform=_safe_json_loads(verifier_node.platforms, ["telegram"])[0],
                         status="pending_review",
                         created_at=datetime.utcnow(),
                         scout_id=legacy_scout.id,
+                        role="verification",
+                        delivery_targets_json=json.dumps(delivery_platforms),
                     )
                 )
-        else:
-            best_item = manager.select_best_content(items, legacy_scout)
-            if best_item:
-                platforms = _safe_json_loads(legacy_scout.platforms, [])
-                draft = manager.generate_draft(legacy_scout, best_item)
-                for platform in (platforms or ["x"]):
+            else:
+                for platform in delivery_platforms:
                     created_posts.append(
                         PostModel(
-                            content=draft,
+                            content=content,
                             platform=platform,
                             status="pending_review",
                             created_at=datetime.utcnow(),
                             scout_id=legacy_scout.id,
                         )
                     )
+        else:
+            best_item = manager.select_best_content(items, legacy_scout)
+            if best_item:
+                platforms = _safe_json_loads(legacy_scout.platforms, [])
+                draft = manager.generate_draft(legacy_scout, best_item)
+                final_platforms = platforms or ["x"]
+                if verifier_node:
+                    created_posts.append(
+                        PostModel(
+                            content=draft,
+                            platform=_safe_json_loads(verifier_node.platforms, ["telegram"])[0],
+                            status="pending_review",
+                            created_at=datetime.utcnow(),
+                            scout_id=legacy_scout.id,
+                            role="verification",
+                            delivery_targets_json=json.dumps(final_platforms),
+                        )
+                    )
+                else:
+                    for platform in final_platforms:
+                        created_posts.append(
+                            PostModel(
+                                content=draft,
+                                platform=platform,
+                                status="pending_review",
+                                created_at=datetime.utcnow(),
+                                scout_id=legacy_scout.id,
+                            )
+                        )
 
         if created_posts:
             for created_post in created_posts:
@@ -1118,7 +1283,68 @@ def approve_post(post_id: int) -> dict[str, Any]:
 
         payload: dict[str, Any] = {"message": "Post approved"}
 
-        if post.platform == "telegram":
+        if post.role == "verification":
+            post.status = "posted"
+            post.posted_at = datetime.utcnow()
+            delivery_targets = _safe_json_loads(post.delivery_targets_json, [])
+            delivered_posts: list[PostModel] = []
+            now = datetime.utcnow()
+
+            for platform in delivery_targets:
+                if platform == "telegram":
+                    delivered_post = PostModel(
+                        content=post.content,
+                        platform=platform,
+                        status="posted",
+                        created_at=now,
+                        posted_at=now,
+                        scout_id=post.scout_id,
+                    )
+                elif platform == "x":
+                    provider = XProvider()
+                    if not provider.authenticate():
+                        raise RuntimeError("X authentication failed")
+                    delivered_post = PostModel(
+                        content=post.content,
+                        platform=platform,
+                        status="posted",
+                        external_id=provider.post(post.content),
+                        created_at=now,
+                        posted_at=now,
+                        scout_id=post.scout_id,
+                    )
+                elif platform == "substack":
+                    provider = SubstackProvider()
+                    if not provider.authenticate():
+                        raise RuntimeError("Substack authentication failed")
+                    external_id = provider.post(post.content)
+                    delivered_post = PostModel(
+                        content=post.content,
+                        platform=platform,
+                        status="posted",
+                        external_id=external_id,
+                        created_at=now,
+                        posted_at=now,
+                        scout_id=post.scout_id,
+                    )
+                    payload["edit_url"] = (
+                        f"https://{os.getenv('SUBSTACK_SUBDOMAIN')}.substack.com/publish/post/{external_id}"
+                        if os.getenv("SUBSTACK_SUBDOMAIN")
+                        else None
+                    )
+                else:
+                    raise RuntimeError(f"Platform '{platform}' is not supported")
+
+                session.add(delivered_post)
+                delivered_posts.append(delivered_post)
+
+            payload["message"] = (
+                f"Verified and sent to {', '.join(delivery_targets)}"
+                if delivery_targets
+                else "Verification approved"
+            )
+            payload["posts"] = [serialize_post(item) for item in delivered_posts]
+        elif post.platform == "telegram":
             post.status = "posted"
             post.posted_at = datetime.utcnow()
         elif post.platform == "x":

@@ -185,6 +185,24 @@ def _migrate_flow_channel_links():
         logger.debug(f"Flow channel link migration check: {e}")
 
 
+def _migrate_posts_add_delivery_fields():
+    """Add post delivery role metadata for verifier workflows."""
+    try:
+        with Session(engine) as session:
+            columns = _get_table_columns(session, "posts")
+            if "role" not in columns:
+                logger.info("Adding role column to posts table...")
+                session.exec(text("ALTER TABLE posts ADD COLUMN role VARCHAR DEFAULT 'delivery'"))
+            if "delivery_targets_json" not in columns:
+                logger.info("Adding delivery_targets_json column to posts table...")
+                session.exec(
+                    text("ALTER TABLE posts ADD COLUMN delivery_targets_json VARCHAR DEFAULT '[]'")
+                )
+            session.commit()
+    except Exception as e:
+        logger.debug(f"Post delivery migration check: {e}")
+
+
 def create_db_and_tables():
     """Create database tables and run migrations."""
     # Create tables first (will create all columns for new databases)
@@ -195,6 +213,7 @@ def create_db_and_tables():
     _migrate_scouts_add_intent_field()
     _migrate_flows_from_legacy_scouts()
     _migrate_flow_channel_links()
+    _migrate_posts_add_delivery_fields()
 
 def get_session():
     with Session(engine) as session:

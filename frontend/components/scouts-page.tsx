@@ -29,7 +29,7 @@ import {
 } from "./icons";
 
 type ScheduleMode = "manual" | "daily" | "weekdays" | "weekly" | "custom";
-type FlowNodeKind = "scout" | "policy" | "agent" | "channel";
+type FlowNodeKind = "scout" | "policy" | "agent" | "verifier" | "channel";
 
 type ScheduleState = {
   mode: ScheduleMode;
@@ -37,6 +37,49 @@ type ScheduleState = {
   dayOfWeek: string;
   custom: string;
 };
+
+type GraphBlock = {
+  id: string;
+  kind: FlowNodeKind;
+  title: string;
+  subtitle: string;
+  badges: string[];
+  x: number;
+  y: number;
+  removable?: boolean;
+  removeLabel?: string;
+  removeAction?: () => void;
+};
+
+type GraphEdge = {
+  id: string;
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+};
+
+function buildGraphPath(edge: GraphEdge) {
+  if (Math.abs(edge.toY - edge.fromY) < 6) {
+    return `M ${edge.fromX} ${edge.fromY} L ${edge.toX} ${edge.toY}`;
+  }
+
+  const horizontalDistance = Math.max(edge.toX - edge.fromX, 120);
+  const bendX =
+    edge.fromX +
+    Math.min(Math.max(horizontalDistance * 0.48, 68), horizontalDistance - 44);
+  const cornerRadius = Math.min(18, Math.abs(edge.toY - edge.fromY) / 2, 26);
+  const verticalDirection = edge.toY > edge.fromY ? 1 : -1;
+
+  return [
+    `M ${edge.fromX} ${edge.fromY}`,
+    `L ${bendX - cornerRadius} ${edge.fromY}`,
+    `Q ${bendX} ${edge.fromY} ${bendX} ${edge.fromY + verticalDirection * cornerRadius}`,
+    `L ${bendX} ${edge.toY - verticalDirection * cornerRadius}`,
+    `Q ${bendX} ${edge.toY} ${bendX + cornerRadius} ${edge.toY}`,
+    `L ${edge.toX} ${edge.toY}`,
+  ].join(" ");
+}
 
 function isTimeValue(value: string) {
   return /^\d{2}:\d{2}$/.test(value);
@@ -126,6 +169,7 @@ function scoutToPayload(scout?: Scout | null): ScoutPayload {
   const config = (scout?.config ?? {}) as Record<string, unknown>;
   const scoutNodes = scout?.nodes?.scouts ?? (scout?.nodes?.scout ? [scout.nodes.scout] : []);
   const channelNodes = scout?.nodes?.channels ?? (scout?.nodes?.channel ? [scout.nodes.channel] : []);
+  const verifierNode = scout?.nodes?.verifier ?? null;
   return {
     name: scout?.name ?? "",
     scout_node_id: scout?.nodes?.scout.id,
@@ -136,6 +180,10 @@ function scoutToPayload(scout?: Scout | null): ScoutPayload {
     channel_node_id: scout?.nodes?.channel.id,
     channel_node_ids: channelNodes.map((node) => node.id),
     channel_node_name: scout?.nodes?.channel.name ?? "",
+    verifier_enabled: Boolean(verifierNode),
+    verifier_node_id: verifierNode?.id,
+    verifier_node_name: verifierNode?.name ?? "",
+    verifier_platform: verifierNode?.platforms?.[0] ?? "telegram",
     type: scout?.type ?? "rss",
     intent: scout?.intent ?? "scouting",
     schedule_cron: scout?.schedule_cron ?? "",
@@ -145,7 +193,12 @@ function scoutToPayload(scout?: Scout | null): ScoutPayload {
       scout?.config?.prompt_template?.toString?.() ??
       "",
     telegram_review: scout?.telegram_review ?? false,
-    platforms: scout?.platforms?.length ? scout.platforms : ["telegram"],
+    platforms:
+      scout?.delivery_platforms?.length
+        ? scout.delivery_platforms
+        : scout?.platforms?.length
+          ? scout.platforms
+          : ["telegram"],
     image_generation: Boolean(config.image_generation),
     provider:
       ((config.generation_config as { provider?: string } | undefined)?.provider ??
@@ -219,6 +272,10 @@ export function ScoutsPage({
   const [form, setForm] = useState<ScoutPayload>(scoutToPayload(null));
   const [builder, setBuilder] = useState<ScoutBuilderSnapshot | null>(null);
   const [activeNode, setActiveNode] = useState<FlowNodeKind>("scout");
+  const [inspectorNode, setInspectorNode] = useState<FlowNodeKind | null>(null);
+  const [selectedGraphBlockId, setSelectedGraphBlockId] = useState<string | null>(
+    null,
+  );
   const [draggingKind, setDraggingKind] = useState<"scout" | "agent" | "channel" | null>(null);
   const [draggedScoutNodeId, setDraggedScoutNodeId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -252,9 +309,16 @@ export function ScoutsPage({
       .map((id) => builder?.nodes.channels.find((node) => node.id === id))
       .filter((node): node is NonNullable<typeof node> => Boolean(node));
   }, [builder, form.channel_node_ids]);
+  const linkedVerifier = useMemo(() => {
+    if (!form.verifier_node_id) {
+      return null;
+    }
+    return builder?.nodes.verifiers.find((node) => node.id === form.verifier_node_id) ?? null;
+  }, [builder, form.verifier_node_id]);
   const isReusingScoutNode = Boolean(form.scout_node_id);
   const isReusingAgentNode = Boolean(form.agent_node_id);
   const isReusingChannelNode = Boolean(form.channel_node_id);
+  const isReusingVerifierNode = Boolean(form.verifier_node_id);
   const flowScoutCount = Math.max(linkedScouts.length, form.scout_node_name ? 1 : 0);
   const hasMultipleScouts = linkedScouts.length > 1;
   const outputLabel =
@@ -263,14 +327,28 @@ export function ScoutsPage({
       : form.platforms.length > 0
         ? form.platforms.map(prettyLabel).join(", ")
       : "No outputs";
+  const verifierLabel = form.verifier_enabled
+    ? linkedVerifier?.name || form.verifier_node_name || prettyLabel(form.verifier_platform)
+    : "No verifier";
 
   const updateScheduleState = (changes: Partial<ScheduleState>) => {
     const nextState = { ...scheduleState, ...changes };
     setForm({ ...form, schedule_cron: cronFromScheduleState(nextState) });
   };
 
+  const openInspectorFor = (kind: FlowNodeKind, blockId?: string) => {
+    setActiveNode(kind);
+    setInspectorNode(kind);
+    setSelectedGraphBlockId(blockId ?? kind);
+  };
+
+  const closeInspector = () => {
+    setInspectorNode(null);
+    setSelectedGraphBlockId(null);
+  };
+
   const startNewScoutNode = () => {
-    setActiveNode("scout");
+    openInspectorFor("scout", "new-scout");
     setScoutPreview(null);
     setForm((current) => ({
       ...current,
@@ -280,6 +358,35 @@ export function ScoutsPage({
         current.tools.length > 0
           ? current.tools
           : [primaryScoutTool(current.type, builder)],
+    }));
+  };
+
+  const startNewAgentNode = () => {
+    openInspectorFor("agent", "agent");
+    setForm((current) => ({
+      ...current,
+      agent_node_id: undefined,
+      agent_node_name: current.agent_node_name || `${current.name || "New"} Agent`,
+    }));
+  };
+
+  const startNewVerifierNode = () => {
+    openInspectorFor("verifier", "verifier");
+    setForm((current) => ({
+      ...current,
+      verifier_enabled: true,
+      verifier_node_id: undefined,
+      verifier_node_name: current.verifier_node_name || `${current.name || "New"} Verifier`,
+      verifier_platform: current.verifier_platform || "telegram",
+    }));
+  };
+
+  const startNewChannelNode = () => {
+    openInspectorFor("channel", "new-channel");
+    setForm((current) => ({
+      ...current,
+      channel_node_id: undefined,
+      channel_node_name: `${current.name || "New"} Channel`,
     }));
   };
 
@@ -358,7 +465,30 @@ export function ScoutsPage({
       channel_node_ids: Array.from(new Set([...(form.channel_node_ids ?? []), node.id])),
       channel_node_name: node.name,
       platforms: node.platforms,
-      telegram_review: node.telegram_review,
+      telegram_review: false,
+    });
+  };
+
+  const handleVerifierNodeSelect = (nodeId: string) => {
+    if (!builder) return;
+    if (nodeId === "") {
+      setForm({
+        ...form,
+        verifier_enabled: false,
+        verifier_node_id: undefined,
+        verifier_node_name: "",
+        verifier_platform: "telegram",
+      });
+      return;
+    }
+    const node = builder.nodes.verifiers.find((entry) => entry.id === Number(nodeId));
+    if (!node) return;
+    setForm({
+      ...form,
+      verifier_enabled: true,
+      verifier_node_id: node.id,
+      verifier_node_name: node.name,
+      verifier_platform: node.platforms[0] ?? "telegram",
     });
   };
 
@@ -371,7 +501,7 @@ export function ScoutsPage({
       channel_node_ids: Array.from(new Set([...(current.channel_node_ids ?? []), node.id])),
       channel_node_name: node.name,
       platforms: node.platforms,
-      telegram_review: node.telegram_review,
+      telegram_review: false,
     }));
   };
 
@@ -385,7 +515,7 @@ export function ScoutsPage({
       channel_node_ids: remaining,
       channel_node_name: nextPrimaryNode?.name ?? current.channel_node_name,
       platforms: nextPrimaryNode?.platforms ?? current.platforms,
-      telegram_review: nextPrimaryNode?.telegram_review ?? current.telegram_review,
+      telegram_review: false,
     }));
   };
 
@@ -458,6 +588,8 @@ export function ScoutsPage({
     }
     setScoutPreview(null);
     setActiveNode("scout");
+    setInspectorNode(null);
+    setSelectedGraphBlockId(null);
     if (selectedScoutId === "new") {
       setForm(scoutToPayload(null));
       return;
@@ -541,6 +673,10 @@ export function ScoutsPage({
       setError("Add at least one saved scout node to the flow before saving.");
       return;
     }
+    if ((form.channel_node_ids ?? []).length === 0) {
+      setError("Add at least one final output node before saving.");
+      return;
+    }
     startTransition(() => {
       const payload = {
         ...form,
@@ -614,175 +750,357 @@ export function ScoutsPage({
     );
   }
 
-  const libraryTitle =
-    activeNode === "scout"
-      ? "Scout nodes"
-      : activeNode === "channel"
-        ? "Output nodes"
-        : activeNode === "agent"
-          ? "Agent nodes"
-          : "Policy";
+  const savedFlows = snapshot.scouts;
+  const hasSavedFlows = savedFlows.length > 0;
+  const canvasScoutNodes =
+    linkedScouts.length > 0
+      ? linkedScouts
+      : [
+          {
+            id: 0,
+            name: form.scout_node_name || form.name || "Listening layer",
+            type: form.type,
+            schedule_cron: form.schedule_cron,
+            last_run: null,
+            created_at: null,
+            config: {},
+          },
+        ];
+  const canvasChannelNodes =
+    linkedChannels.length > 0
+      ? linkedChannels
+      : [
+          {
+            id: 0,
+            name: form.channel_node_name || "Output channel",
+            platforms: form.platforms,
+            telegram_review: form.telegram_review,
+            kind: "channel" as const,
+            created_at: null,
+            config: {},
+          },
+        ];
 
-  const libraryDescription =
-    activeNode === "scout"
-      ? "Drag saved scout nodes into the canvas or start a new listener."
-      : activeNode === "channel"
-        ? "Attach one or more delivery nodes to this flow."
-        : activeNode === "agent"
-          ? "Pick the transform node that should shape the final output."
-          : "Choose how multiple scout sources should feed the agent.";
+  const graphLayout = (() => {
+    const blockWidth = 220;
+    const blockHeight = 132;
+    const scoutX = 56;
+    const policyX = 356;
+    const agentX = hasMultipleScouts ? 656 : 456;
+    const verifierX = form.verifier_enabled ? agentX + 300 : agentX;
+    const channelX = form.verifier_enabled ? verifierX + 300 : agentX + 300;
+    const scoutGap = 170;
+    const channelGap = 170;
+    const baseY = 110;
+    const scoutStartY = baseY;
+    const scoutCenterY =
+      scoutStartY + ((canvasScoutNodes.length - 1) * scoutGap) / 2;
+    const policyY = scoutCenterY;
+    const agentY = scoutCenterY;
+    const verifierY = agentY;
+    const channelStartY =
+      agentY - ((canvasChannelNodes.length - 1) * channelGap) / 2;
+
+    const blocks: GraphBlock[] = canvasScoutNodes.map((node, index) => ({
+      id: `scout-${node.id || index}`,
+      kind: "scout",
+      title: node.name,
+      subtitle: `${prettyLabel(primaryScoutTool(node.type, builder))} scout`,
+      badges: [node.id ? "Reusable" : "New node", node.schedule_cron ? "Scheduled" : "Manual"],
+      x: scoutX,
+      y: scoutStartY + scoutGap * index,
+      removable: Boolean(node.id && (form.scout_node_ids ?? []).length > 1),
+      removeLabel: "Remove",
+      removeAction: node.id ? () => removeScoutFromCanvas(node.id) : undefined,
+    }));
+
+    if (hasMultipleScouts) {
+      blocks.push({
+        id: "policy",
+        kind: "policy",
+        title:
+          form.flow_policy === "as_it_comes"
+            ? "As It Comes"
+            : "Pool Aggregation",
+        subtitle:
+          form.flow_policy === "as_it_comes"
+            ? "First usable scout signal continues the run."
+            : "All scout signals pool before the agent runs.",
+        badges: ["Routing", "Graph policy"],
+        x: policyX,
+        y: policyY,
+      });
+    }
+
+    blocks.push({
+      id: "agent",
+      kind: "agent",
+      title:
+        form.agent_node_name ||
+        (form.intent === "generation" ? "Draft creator" : "Signal analyst"),
+      subtitle: `${form.model_id || "Gemini"} at ${form.temperature.toFixed(1)} creativity`,
+      badges: [isReusingAgentNode ? "Reusable" : "New node", prettyLabel(form.intent)],
+      x: agentX,
+      y: agentY,
+    });
+
+    if (form.verifier_enabled) {
+      blocks.push({
+        id: "verifier",
+        kind: "verifier",
+        title: verifierLabel,
+        subtitle: `Review in ${prettyLabel(form.verifier_platform)} before delivery`,
+        badges: [isReusingVerifierNode ? "Reusable" : "New node", "Optional gate"],
+        x: verifierX,
+        y: verifierY,
+      });
+    }
+
+    canvasChannelNodes.forEach((node, index) => {
+      blocks.push({
+        id: `channel-${node.id || index}`,
+        kind: "channel",
+        title: node.name,
+        subtitle: node.platforms.map(prettyLabel).join(", ") || "No outputs selected",
+        badges: [node.id ? "Reusable" : "New node", "Final delivery"],
+        x: channelX,
+        y: channelStartY + channelGap * index,
+        removable: Boolean(node.id && (form.channel_node_ids ?? []).length > 1),
+        removeLabel: "Remove",
+        removeAction: node.id ? () => removeChannelFromCanvas(node.id) : undefined,
+      });
+    });
+
+    const portRadius = 6;
+    const centers = new Map(
+      blocks.map((block) => [
+        block.id,
+        {
+          outX: block.x + blockWidth + portRadius,
+          inX: block.x - portRadius,
+          y: block.y + blockHeight / 2,
+        },
+      ]),
+    );
+
+    const edges: GraphEdge[] = [];
+    const targetForScouts = hasMultipleScouts ? "policy" : "agent";
+    blocks
+      .filter((block) => block.kind === "scout")
+      .forEach((block) => {
+        const from = centers.get(block.id);
+        const to = centers.get(targetForScouts);
+        if (from && to) {
+          edges.push({
+            id: `${block.id}-${targetForScouts}`,
+            fromX: from.outX,
+            fromY: from.y,
+            toX: to.inX,
+            toY: to.y,
+          });
+        }
+      });
+
+    if (hasMultipleScouts) {
+      const from = centers.get("policy");
+      const to = centers.get("agent");
+      if (from && to) {
+        edges.push({
+          id: "policy-agent",
+          fromX: from.outX,
+          fromY: from.y,
+          toX: to.inX,
+          toY: to.y,
+        });
+      }
+    }
+
+    if (form.verifier_enabled) {
+      const from = centers.get("agent");
+      const to = centers.get("verifier");
+      if (from && to) {
+        edges.push({
+          id: "agent-verifier",
+          fromX: from.outX,
+          fromY: from.y,
+          toX: to.inX,
+          toY: to.y,
+        });
+      }
+    }
+
+    blocks
+      .filter((block) => block.kind === "channel")
+      .forEach((block) => {
+        const from = centers.get(form.verifier_enabled ? "verifier" : "agent");
+        const to = centers.get(block.id);
+        if (from && to) {
+          edges.push({
+            id: `${form.verifier_enabled ? "verifier" : "agent"}-${block.id}`,
+            fromX: from.outX,
+            fromY: from.y,
+            toX: to.inX,
+            toY: to.y,
+          });
+        }
+      });
+
+    const width = Math.max(channelX + blockWidth + 80, 1100);
+    const maxNodeY = Math.max(...blocks.map((block) => block.y), baseY);
+    const height = Math.max(maxNodeY + blockHeight + 120, 520);
+
+    return { blocks, edges, width, height, blockWidth, blockHeight };
+  })();
 
   return (
     <section className="page-stack workflow-studio-page">
       {notice ? <p className="feedback-banner success">{notice}</p> : null}
       {error ? <p className="feedback-banner error">{error}</p> : null}
 
-      <section className="workflow-studio">
-        <aside className="panel studio-sidebar">
-          <div className="studio-sidebar-section">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Flows</p>
-                <h2>Workflow browser</h2>
-              </div>
+      <section
+        className={`workflow-studio ${inspectorNode ? "workflow-studio-with-inspector" : "workflow-studio-board-only"}`}
+      >
+        <section className={`panel studio-board ${selectedScoutId !== null ? "studio-board-active" : ""}`}>
+          <div className={`studio-browser-bar ${selectedScoutId !== null ? "compact" : ""}`}>
+            <div className="studio-browser-copy">
+              <p className="eyebrow">Flow Browser</p>
+              <strong>
+                {hasSavedFlows
+                  ? "Pick a workflow or start a fresh one."
+                  : "Start your first workflow."}
+              </strong>
+            </div>
+            <div className="studio-browser-meta">
+              {hasSavedFlows
+                ? `${savedFlows.length} saved ${savedFlows.length === 1 ? "flow" : "flows"}`
+                : "No flows yet"}
+            </div>
+            <div className="flow-browser-tray">
               <button
-                className="button button-secondary"
+                className={`flow-browser-pill flow-browser-create ${selectedScoutId === "new" ? "active" : ""}`}
                 onClick={() => setSelectedScoutId("new")}
                 type="button"
               >
-                <ComposeIcon className="button-icon" />
-                New flow
+                <PlusIcon className="micro-icon" />
+                <div>
+                  <strong>New flow</strong>
+                  <span>Fresh workflow graph</span>
+                </div>
               </button>
-            </div>
-
-            <div className="canvas-list flow-browser">
-              {snapshot.scouts.map((scout) => (
+              {savedFlows.map((scout) => (
                 <button
-                  className={`canvas-item ${selectedScoutId === scout.id ? "active" : ""}`}
+                  className={`flow-browser-pill ${selectedScoutId === scout.id ? "active" : ""}`}
                   key={scout.id}
                   onClick={() => setSelectedScoutId(scout.id)}
                   type="button"
                 >
-                  <div className="canvas-item-head">
-                    <RadarIcon className="shortcut-icon small" />
-                    <strong>{scout.name}</strong>
-                  </div>
-                  <p>{scout.nodes?.scouts?.length ?? 1} scouts</p>
+                  <strong>{scout.name}</strong>
                   <span>{formatTime(scout.last_run)}</span>
                 </button>
               ))}
             </div>
           </div>
 
-          <div className="studio-sidebar-section node-shelf">
-            <div>
-              <p className="eyebrow">Node Shelf</p>
-              <h2>{libraryTitle}</h2>
-              <p className="board-subtle">{libraryDescription}</p>
-            </div>
-
-            {activeNode === "scout" ? (
-              <div className="node-library-grid studio-library-grid">
-                <button
-                  className="library-create-card"
-                  onClick={startNewScoutNode}
-                  type="button"
-                >
-                  <PlusIcon className="shortcut-icon" />
-                  <strong>Create scout node</strong>
-                  <span>Start a new listening source for this board.</span>
-                </button>
-                {(builder?.nodes.scouts ?? []).map((node) => (
+          {selectedScoutId === null ? (
+            <div className="studio-empty-shell">
+              <div className="studio-empty-orb studio-empty-orb-a" />
+              <div className="studio-empty-orb studio-empty-orb-b" />
+              <section className="studio-empty-hero">
+                <p className="eyebrow">Workflow Studio</p>
+                <h3>Build a flow from signal to delivery.</h3>
+                <p>
+                  Create scouts that listen, route them through one agent, and
+                  deliver approved output into one or more channels.
+                </p>
+                <div className="studio-empty-highlights">
+                  <span>Reusable nodes</span>
+                  <span>Live canvas</span>
+                  <span>Multi-output delivery</span>
+                </div>
+                <div className="button-row">
                   <button
-                    className={`library-chip ${(form.scout_node_ids ?? []).includes(node.id) ? "active" : ""}`}
-                    draggable
-                    key={node.id}
-                    onDragStart={() => {
-                      setDraggingKind("scout");
-                      setDraggedScoutNodeId(node.id);
-                    }}
-                    onDragEnd={() => {
-                      setDraggingKind(null);
-                      setDraggedScoutNodeId(null);
-                    }}
-                    onClick={() => addScoutToCanvas(node.id)}
+                    className="button button-primary"
+                    onClick={() => setSelectedScoutId("new")}
                     type="button"
                   >
-                    <strong>{node.name}</strong>
-                    <span>{prettyLabel(node.type)}</span>
+                    Create flow
                   </button>
-                ))}
-              </div>
-            ) : null}
-
-            {activeNode === "agent" ? (
-              <div className="node-library-grid studio-library-grid">
-                {(builder?.nodes.agents ?? []).map((node) => (
-                  <button
-                    className={`library-chip ${form.agent_node_id === node.id ? "active" : ""}`}
-                    key={node.id}
-                    onClick={() => handleAgentNodeSelect(String(node.id))}
-                    type="button"
-                  >
-                    <strong>{node.name}</strong>
-                    <span>{prettyLabel(node.intent)}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            {activeNode === "channel" ? (
-              <div className="node-library-grid studio-library-grid">
-                {(builder?.nodes.channels ?? []).map((node) => (
-                  <button
-                    className={`library-chip ${(form.channel_node_ids ?? []).includes(node.id) ? "active" : ""}`}
-                    key={node.id}
-                    onClick={() => addChannelToCanvas(node.id)}
-                    type="button"
-                  >
-                    <strong>{node.name}</strong>
-                    <span>{node.platforms.map(prettyLabel).join(", ")}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            {activeNode === "policy" ? (
-              <div className="tool-picker">
-                {(builder?.flow_policies ?? []).map((policy) => {
-                  const active = form.flow_policy === policy.id;
-                  return (
+                  {hasSavedFlows ? (
                     <button
-                      className={`tool-chip policy-card ${active ? "active" : ""}`}
-                      key={policy.id}
-                      onClick={() => setForm({ ...form, flow_policy: policy.id })}
+                      className="button button-secondary"
+                      onClick={() => setSelectedScoutId(savedFlows[0]?.id ?? null)}
                       type="button"
                     >
-                      <div>
-                        <strong>{policy.label}</strong>
-                        <p>{policy.description}</p>
-                      </div>
+                      Open latest
                     </button>
-                  );
-                })}
-              </div>
-            ) : null}
-          </div>
-        </aside>
+                  ) : null}
+                </div>
+                <div className="studio-empty-steps">
+                  <div className="studio-step-card">
+                    <span>1</span>
+                    <strong>Listen</strong>
+                    <p>Use scout nodes to watch RSS, Reddit, Search, Substack, or the browser.</p>
+                  </div>
+                  <div className="studio-step-card">
+                    <span>2</span>
+                    <strong>Shape</strong>
+                    <p>Use one agent to choose what matters and turn it into structured output.</p>
+                  </div>
+                  <div className="studio-step-card">
+                    <span>3</span>
+                    <strong>Deliver</strong>
+                    <p>Route drafts through review and fan them out to your final channels.</p>
+                  </div>
+                </div>
+              </section>
 
-        <section className="panel studio-board">
-          {selectedScoutId === null ? (
-            <div className="canvas-empty">
-              <RadarIcon className="shortcut-icon" />
-              <h3>Select a flow or start a new board.</h3>
-              <p>
-                Open a flow from the browser to edit its graph, or create a new
-                one from the left panel.
-              </p>
+              <aside className="studio-empty-preview">
+                <div className="studio-preview-card">
+                  <div className="studio-preview-stage">
+                    <div className="preview-connection preview-connection-left" />
+                    <div className="preview-connection preview-connection-right" />
+                    <div className="preview-connection preview-connection-bottom" />
+
+                    <div className="preview-node preview-node-scout">
+                      <RadarIcon className="shortcut-icon" />
+                      <span>Scout</span>
+                      <strong>Signal feed</strong>
+                    </div>
+
+                    <div className="preview-node preview-node-agent">
+                      <ComposeIcon className="shortcut-icon" />
+                      <span>Agent</span>
+                      <strong>Signal analyst</strong>
+                    </div>
+
+                    <div className="preview-node preview-node-output">
+                      <ReviewIcon className="shortcut-icon" />
+                      <span>Output</span>
+                      <strong>Telegram, X</strong>
+                    </div>
+
+                    <div className="preview-node preview-node-review">
+                      <BranchIcon className="shortcut-icon" />
+                      <span>Policy</span>
+                      <strong>Pooled context</strong>
+                    </div>
+
+                    <div className="preview-signal-chip preview-signal-chip-a">RSS</div>
+                    <div className="preview-signal-chip preview-signal-chip-b">Reddit</div>
+                    <div className="preview-signal-chip preview-signal-chip-c">Substack</div>
+                  </div>
+                  <div className="studio-preview-caption">
+                    <strong>One visual graph, reusable everywhere.</strong>
+                    <p>
+                      Connect scouts, shared agents, policy logic, and outputs in one interactive workspace.
+                    </p>
+                  </div>
+                </div>
+              </aside>
             </div>
           ) : (
             <>
-              <div className="studio-topbar">
+              <div className="studio-topbar compact">
                 <div>
                   <p className="eyebrow">Workflow Studio</p>
                   <input
@@ -792,12 +1110,19 @@ export function ScoutsPage({
                     value={form.name}
                   />
                   <p className="board-subtle">
-                    {flowScoutCount} scout nodes,{" "}
-                    {hasMultipleScouts ? "policy routing enabled" : "direct route to agent"},{" "}
-                    {linkedChannels.length || 1} output nodes
+                    {flowScoutCount} scout nodes, {form.verifier_enabled ? "verification enabled" : "no verifier"},{" "}
+                    {linkedChannels.length || 1} final output nodes
                   </p>
                 </div>
                 <div className="button-row studio-actions">
+                  <button
+                    className="button button-secondary"
+                    onClick={() => setSelectedScoutId("new")}
+                    type="button"
+                  >
+                    <ComposeIcon className="button-icon" />
+                    New flow
+                  </button>
                   {selectedScoutId !== "new" ? (
                     <button
                       className="button button-secondary"
@@ -830,42 +1155,50 @@ export function ScoutsPage({
                 </div>
               </div>
 
+              <div className="flow-overview-strip compact">
+                <div className="flow-overview-card">
+                  <span className="flow-overview-label">Sources</span>
+                  <strong>{flowScoutCount} scout node{flowScoutCount === 1 ? "" : "s"}</strong>
+                  <p>{hasMultipleScouts ? "Multiple inputs feed one shared agent." : "Single input flows directly to the agent."}</p>
+                </div>
+                <div className="flow-overview-card">
+                  <span className="flow-overview-label">Verifier</span>
+                  <strong>{form.verifier_enabled ? prettyLabel(form.verifier_platform) : "Skipped"}</strong>
+                  <p>{form.verifier_enabled ? `${verifierLabel} reviews drafts before final delivery.` : "Drafts go straight to final output approvals."}</p>
+                </div>
+                <div className="flow-overview-card">
+                  <span className="flow-overview-label">Delivery</span>
+                  <strong>{linkedChannels.length || form.platforms.length || 1} target{(linkedChannels.length || form.platforms.length || 1) === 1 ? "" : "s"}</strong>
+                  <p>{outputLabel}</p>
+                </div>
+              </div>
+
               <div className="board-stage">
                 <div className="board-header">
                   <div>
-                    <p className="eyebrow">Canvas</p>
-                    <strong>Drop nodes and connect the execution path</strong>
+                    <p className="eyebrow">Pipeline</p>
+                    <strong>Build the graph from scouting to delivery</strong>
                   </div>
                   <div className="canvas-palette">
-                    <button
-                      className={`palette-chip ${activeNode === "scout" ? "active" : ""}`}
-                      onClick={() => setActiveNode("scout")}
-                      type="button"
-                    >
-                      Scout
+                    <button className="palette-chip" onClick={startNewScoutNode} type="button">
+                      Add scout
                     </button>
-                    <button
-                      className={`palette-chip ${activeNode === "agent" ? "active" : ""}`}
-                      onClick={() => setActiveNode("agent")}
-                      type="button"
-                    >
-                      Agent
+                    <button className="palette-chip" onClick={startNewAgentNode} type="button">
+                      Add agent
                     </button>
-                    <button
-                      className={`palette-chip ${activeNode === "channel" ? "active" : ""}`}
-                      onClick={() => setActiveNode("channel")}
-                      type="button"
-                    >
-                      Output
+                    <button className="palette-chip" onClick={startNewVerifierNode} type="button">
+                      Add verifier
+                    </button>
+                    <button className="palette-chip" onClick={startNewChannelNode} type="button">
+                      Add output
                     </button>
                   </div>
                 </div>
 
                 <div className="flow-canvas studio-canvas-surface">
-                  <div className={`flow-canvas-grid ${hasMultipleScouts ? "multi-source" : ""}`}>
+                  <div className="graph-canvas-shell">
                     <div
-                      className={`canvas-stack ${activeNode === "scout" ? "active" : ""} ${draggingKind === "scout" ? "drop-target" : ""}`}
-                      onClick={() => setActiveNode("scout")}
+                      className="graph-canvas"
                       onDragOver={(e) => {
                         if (draggingKind === "scout") e.preventDefault();
                       }}
@@ -877,214 +1210,124 @@ export function ScoutsPage({
                         setDraggedScoutNodeId(null);
                         setDraggingKind(null);
                       }}
-                      role="button"
-                      tabIndex={0}
+                      style={{
+                        minWidth: `${graphLayout.width}px`,
+                        height: `${graphLayout.height}px`,
+                      }}
                     >
-                      {(linkedScouts.length > 0 ? linkedScouts : [{
-                        id: 0,
-                        name: form.scout_node_name || form.name || "Listening layer",
-                        type: form.type,
-                        schedule_cron: form.schedule_cron,
-                        last_run: null,
-                        created_at: null,
-                        config: {},
-                      }]).map((node, index) => (
+                      <svg
+                        aria-hidden="true"
+                        className="graph-edges"
+                        height={graphLayout.height}
+                        viewBox={`0 0 ${graphLayout.width} ${graphLayout.height}`}
+                        width={graphLayout.width}
+                      >
+                        {graphLayout.edges.map((edge) => {
+                          return (
+                            <path
+                              className="graph-edge-path"
+                              d={buildGraphPath(edge)}
+                              key={edge.id}
+                            />
+                          );
+                        })}
+                      </svg>
+
+                      {graphLayout.blocks.map((block, index) => (
                         <button
-                          className="canvas-node scout-node"
-                          key={`${node.id}-${index}`}
+                          className={`graph-block ${selectedGraphBlockId === block.id ? "active" : ""}`}
+                          key={block.id}
                           onClick={() => {
-                            setActiveNode("scout");
-                            if (node.id) handleScoutNodeSelect(String(node.id));
+                            openInspectorFor(block.kind, block.id);
+                            if (block.kind === "scout" && block.id.startsWith("scout-")) {
+                              const nodeId = Number(block.id.replace("scout-", ""));
+                              if (nodeId) handleScoutNodeSelect(String(nodeId));
+                            }
+                            if (block.kind === "channel" && block.id.startsWith("channel-")) {
+                              const nodeId = Number(block.id.replace("channel-", ""));
+                              if (nodeId) handleChannelNodeSelect(String(nodeId));
+                            }
                           }}
+                          style={{ left: `${block.x}px`, top: `${block.y}px` }}
                           type="button"
                         >
+                          <span className="graph-port graph-port-in" />
+                          <span className="graph-port graph-port-out" />
                           <span className="canvas-node-badge">{index + 1}</span>
                           <div className="flow-node-head">
-                            <RadarIcon className="shortcut-icon" />
+                            {block.kind === "scout" ? (
+                              <RadarIcon className="shortcut-icon" />
+                            ) : block.kind === "policy" ? (
+                              <BranchIcon className="shortcut-icon" />
+                            ) : block.kind === "agent" ? (
+                              <ComposeIcon className="shortcut-icon" />
+                            ) : (
+                              <ReviewIcon className="shortcut-icon" />
+                            )}
                             <div>
-                              <p className="eyebrow">Scout</p>
-                              <strong>{node.name}</strong>
+                              <p className="eyebrow">{prettyLabel(block.kind)}</p>
+                              <strong>{block.title}</strong>
                             </div>
                           </div>
-                          <p>
-                            {prettyLabel(primaryScoutTool(node.type, builder))} scout
-                          </p>
+                          <p>{block.subtitle}</p>
                           <div className="node-meta-row">
-                            <span className="node-meta-pill">
-                              {node.id ? "Reusable" : "New node"}
-                            </span>
-                            <span className="node-meta-pill subtle">
-                              {node.schedule_cron ? "Scheduled" : "Manual"}
-                            </span>
+                            {block.badges.map((badge) => (
+                              <span
+                                className="node-meta-pill subtle"
+                                key={`${block.id}-${badge}`}
+                              >
+                                {badge}
+                              </span>
+                            ))}
                           </div>
-                          {node.id && (form.scout_node_ids ?? []).length > 1 ? (
+                          {block.removable && block.removeAction ? (
                             <span
                               className="node-remove"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                removeScoutFromCanvas(node.id);
+                                block.removeAction?.();
                               }}
                             >
-                              Remove
+                              {block.removeLabel}
                             </span>
                           ) : null}
                         </button>
                       ))}
-                      <button
-                        className="canvas-add-node"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          startNewScoutNode();
-                        }}
-                        type="button"
-                      >
-                        <PlusIcon className="micro-icon" />
-                        Add scout node
-                      </button>
-                    </div>
 
-                    <div className="flow-link" aria-hidden="true">
-                      <span />
-                    </div>
-
-                    {hasMultipleScouts ? (
-                      <>
+                      <div className="graph-add-rail">
                         <button
-                          className={`canvas-node ${activeNode === "policy" ? "active" : ""}`}
-                          onClick={() => setActiveNode("policy")}
+                          className="canvas-add-node"
+                          onClick={startNewScoutNode}
                           type="button"
                         >
-                          <span className="canvas-node-badge">2</span>
-                          <div className="flow-node-head">
-                            <BranchIcon className="shortcut-icon" />
-                            <div>
-                              <p className="eyebrow">Policy</p>
-                              <strong>
-                                {form.flow_policy === "as_it_comes"
-                                  ? "As It Comes"
-                                  : "Pool Aggregation"}
-                              </strong>
-                            </div>
-                          </div>
-                          <p>
-                            {form.flow_policy === "as_it_comes"
-                              ? "Stop at the first scout that produces usable context."
-                              : "Collect all scout signals before the agent decides."}
-                          </p>
+                          <PlusIcon className="micro-icon" />
+                          Add scout
                         </button>
-
-                        <div className="flow-link" aria-hidden="true">
-                          <span />
-                        </div>
-                      </>
-                    ) : null}
-
-                    <button
-                      className={`canvas-node ${activeNode === "agent" ? "active" : ""}`}
-                      onClick={() => setActiveNode("agent")}
-                      type="button"
-                    >
-                      <span className="canvas-node-badge">{hasMultipleScouts ? "3" : "2"}</span>
-                      <div className="flow-node-head">
-                        <ComposeIcon className="shortcut-icon" />
-                        <div>
-                          <p className="eyebrow">Agent</p>
-                          <strong>
-                            {form.intent === "generation"
-                              ? "Draft creator"
-                              : "Signal analyst"}
-                          </strong>
-                        </div>
-                      </div>
-                      <p>
-                        {form.model_id || "Gemini"} with creativity{" "}
-                        {form.temperature.toFixed(1)}
-                      </p>
-                      <div className="node-meta-row">
-                        <span className="node-meta-pill">
-                          {isReusingAgentNode ? "Reusable" : "New node"}
-                        </span>
-                        <span className="node-meta-pill subtle">
-                          {prettyLabel(form.intent)}
-                        </span>
-                      </div>
-                    </button>
-
-                    <div className="flow-link" aria-hidden="true">
-                      <span />
-                    </div>
-
-                    <div
-                      className={`canvas-stack ${activeNode === "channel" ? "active" : ""}`}
-                      onClick={() => setActiveNode("channel")}
-                      role="button"
-                      tabIndex={0}
-                    >
-                      {(linkedChannels.length > 0 ? linkedChannels : [{
-                        id: 0,
-                        name: form.channel_node_name || "Output channel",
-                        platforms: form.platforms,
-                        telegram_review: form.telegram_review,
-                        created_at: null,
-                        config: {},
-                      }]).map((node, index) => (
                         <button
-                          className="canvas-node scout-node"
-                          key={`${node.id}-${index}`}
-                          onClick={() => {
-                            setActiveNode("channel");
-                            if (node.id) handleChannelNodeSelect(String(node.id));
-                          }}
+                          className="canvas-add-node"
+                          onClick={startNewAgentNode}
                           type="button"
                         >
-                          <span className="canvas-node-badge">
-                            {hasMultipleScouts ? `4.${index + 1}` : `3.${index + 1}`}
-                          </span>
-                          <div className="flow-node-head">
-                            <ReviewIcon className="shortcut-icon" />
-                            <div>
-                              <p className="eyebrow">Channel</p>
-                              <strong>{node.name}</strong>
-                            </div>
-                          </div>
-                          <p>{node.platforms.map(prettyLabel).join(", ") || "No outputs selected"}</p>
-                          <div className="node-meta-row">
-                            <span className="node-meta-pill">
-                              {node.id ? "Reusable" : "New node"}
-                            </span>
-                            <span className="node-meta-pill subtle">
-                              {node.telegram_review ? "Review" : "Direct"}
-                            </span>
-                          </div>
-                          {node.id && (form.channel_node_ids ?? []).length > 1 ? (
-                            <span
-                              className="node-remove"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeChannelFromCanvas(node.id);
-                              }}
-                            >
-                              Remove
-                            </span>
-                          ) : null}
+                          <PlusIcon className="micro-icon" />
+                          Add agent
                         </button>
-                      ))}
-                      <button
-                        className="canvas-add-node"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setActiveNode("channel");
-                          setForm((current) => ({
-                            ...current,
-                            channel_node_id: undefined,
-                            channel_node_name: `${current.name || "New"} Channel`,
-                          }));
-                        }}
-                        type="button"
-                      >
-                        <PlusIcon className="micro-icon" />
-                        Add output node
-                      </button>
+                        <button
+                          className="canvas-add-node"
+                          onClick={startNewVerifierNode}
+                          type="button"
+                        >
+                          <PlusIcon className="micro-icon" />
+                          Add verifier
+                        </button>
+                        <button
+                          className="canvas-add-node"
+                          onClick={startNewChannelNode}
+                          type="button"
+                        >
+                          <PlusIcon className="micro-icon" />
+                          Add output
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -1093,13 +1336,16 @@ export function ScoutsPage({
                       <strong>Execution path</strong>
                       <p>
                         {hasMultipleScouts
-                          ? `Scout sources pass through ${form.flow_policy === "as_it_comes" ? "an as-it-comes policy" : "a pooled aggregation policy"} before the agent transforms the result.`
-                          : "Scout sources feed the agent directly, then fan out into output nodes."}
+                          ? `Scout sources pass through ${form.flow_policy === "as_it_comes" ? "an as-it-comes policy" : "a pooled aggregation policy"} before the agent transforms the result${form.verifier_enabled ? ` and sends it to ${verifierLabel} for verification` : ""}.`
+                          : `Scout sources feed the agent directly${form.verifier_enabled ? `, then ${verifierLabel} reviews the draft` : ""}, before final delivery.`}
                       </p>
                     </div>
                     <div className="flow-canvas-note">
-                      <strong>Current outputs</strong>
-                      <p>{outputLabel}</p>
+                      <strong>Review and delivery</strong>
+                      <p>
+                        {form.verifier_enabled ? `${verifierLabel} -> ` : ""}
+                        {outputLabel}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -1108,127 +1354,47 @@ export function ScoutsPage({
           )}
         </section>
 
-        <aside className="panel studio-inspector">
-          {selectedScoutId === null ? (
-            <div className="canvas-empty compact">
-              <ComposeIcon className="shortcut-icon" />
-              <h3>Inspector</h3>
-              <p>Select a flow to configure its selected node.</p>
-            </div>
-          ) : (
+        {inspectorNode ? (
+          <aside className="panel studio-inspector">
             <>
               <div className="panel-header">
                 <div>
                   <p className="eyebrow">Inspector</p>
                   <h2>
-                      {activeNode === "scout"
+                      {inspectorNode === "scout"
                         ? "Scout node"
-                        : activeNode === "policy"
+                        : inspectorNode === "policy"
                           ? "Policy node"
-                        : activeNode === "agent"
+                        : inspectorNode === "agent"
                           ? "Agent node"
+                          : inspectorNode === "verifier"
+                            ? "Verifier node"
                           : "Channel node"}
                   </h2>
                 </div>
-                <div className="topbar-chip">
-                  {activeNode === "scout"
+                <div className="button-row compact">
+                  <div className="topbar-chip">
+                  {inspectorNode === "scout"
                     ? "Listening"
-                    : activeNode === "policy"
+                    : inspectorNode === "policy"
                       ? "Route logic"
-                    : activeNode === "agent"
+                    : inspectorNode === "agent"
                       ? "Transform"
+                      : inspectorNode === "verifier"
+                        ? "Review gate"
                       : "Deliver"}
+                  </div>
+                  <button
+                    className="button button-secondary"
+                    onClick={closeInspector}
+                    type="button"
+                  >
+                    Close
+                  </button>
                 </div>
               </div>
 
-              <div className="node-mode-toggle">
-                {activeNode === "scout" ? (
-                  <>
-                    <button
-                      className={`mode-chip ${!isReusingScoutNode ? "active" : ""}`}
-                      onClick={startNewScoutNode}
-                      type="button"
-                    >
-                      <PlusIcon className="micro-icon" />
-                      Create new scout
-                    </button>
-                    <button
-                      className={`mode-chip ${isReusingScoutNode ? "active" : ""}`}
-                      onClick={() => {
-                        if (builder?.nodes.scouts?.[0]) {
-                          handleScoutNodeSelect(String(builder.nodes.scouts[0].id));
-                        }
-                      }}
-                      type="button"
-                    >
-                      <BranchIcon className="micro-icon" />
-                      Reuse scout
-                    </button>
-                  </>
-                ) : activeNode === "policy" ? null : activeNode === "agent" ? (
-                  <>
-                    <button
-                      className={`mode-chip ${!isReusingAgentNode ? "active" : ""}`}
-                      onClick={() =>
-                        setForm((current) => ({
-                          ...current,
-                          agent_node_id: undefined,
-                          agent_node_name:
-                            current.agent_node_name || `${current.name || "New"} Agent`,
-                        }))
-                      }
-                      type="button"
-                    >
-                      <PlusIcon className="micro-icon" />
-                      Create new agent
-                    </button>
-                    <button
-                      className={`mode-chip ${isReusingAgentNode ? "active" : ""}`}
-                      onClick={() => {
-                        if (builder?.nodes.agents?.[0]) {
-                          handleAgentNodeSelect(String(builder.nodes.agents[0].id));
-                        }
-                      }}
-                      type="button"
-                    >
-                      <BranchIcon className="micro-icon" />
-                      Reuse agent
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button
-                      className={`mode-chip ${!isReusingChannelNode ? "active" : ""}`}
-                      onClick={() =>
-                        setForm((current) => ({
-                          ...current,
-                          channel_node_id: undefined,
-                          channel_node_name:
-                            current.channel_node_name || `${current.name || "New"} Channel`,
-                        }))
-                      }
-                      type="button"
-                    >
-                      <PlusIcon className="micro-icon" />
-                      Create new output
-                    </button>
-                    <button
-                      className={`mode-chip ${isReusingChannelNode ? "active" : ""}`}
-                      onClick={() => {
-                        if (builder?.nodes.channels?.[0]) {
-                          handleChannelNodeSelect(String(builder.nodes.channels[0].id));
-                        }
-                      }}
-                      type="button"
-                    >
-                      <BranchIcon className="micro-icon" />
-                      Reuse output
-                    </button>
-                  </>
-                )}
-              </div>
-
-              {activeNode === "scout" ? (
+              {inspectorNode === "scout" ? (
                   <article className="canvas-card inspector-card">
                   <div className="canvas-card-head">
                     <RadarIcon className="shortcut-icon" />
@@ -1238,8 +1404,7 @@ export function ScoutsPage({
                     </div>
                   </div>
                   <p className="canvas-card-copy">
-                    Set up a listening node here. You can start from a fresh
-                    scout or pull an existing scout into the flow and reuse it.
+                    Set up the selected listening node here.
                   </p>
 
                   <div className="settings-stack">
@@ -1533,7 +1698,7 @@ export function ScoutsPage({
                   </article>
               ) : null}
 
-              {activeNode === "agent" ? (
+              {inspectorNode === "agent" ? (
                   <article className="canvas-card inspector-card">
                   <div className="canvas-card-head">
                     <ComposeIcon className="shortcut-icon" />
@@ -1659,7 +1824,7 @@ export function ScoutsPage({
                   </article>
               ) : null}
 
-              {activeNode === "policy" ? (
+              {inspectorNode === "policy" ? (
                   <article className="canvas-card inspector-card">
                     <div className="canvas-card-head">
                       <BranchIcon className="shortcut-icon" />
@@ -1697,7 +1862,92 @@ export function ScoutsPage({
                   </article>
               ) : null}
 
-              {activeNode === "channel" ? (
+              {inspectorNode === "verifier" ? (
+                  <article className="canvas-card inspector-card">
+                  <div className="canvas-card-head">
+                    <ReviewIcon className="shortcut-icon" />
+                    <div>
+                      <p className="eyebrow">Verifier</p>
+                      <h3>Add an optional approval step</h3>
+                    </div>
+                  </div>
+                  <p className="canvas-card-copy">
+                    A verifier sits between the agent and final channels. Use it when one place
+                    should approve drafts before they fan out to destinations.
+                  </p>
+
+                  <div className="settings-stack">
+                    <label className="toggle-row">
+                      <input
+                        checked={form.verifier_enabled}
+                        onChange={(e) =>
+                          setForm({
+                            ...form,
+                            verifier_enabled: e.target.checked,
+                            verifier_node_id: e.target.checked ? form.verifier_node_id : undefined,
+                            verifier_node_name: e.target.checked ? form.verifier_node_name : "",
+                            verifier_platform: e.target.checked ? form.verifier_platform : "telegram",
+                          })
+                        }
+                        type="checkbox"
+                      />
+                      <span>Enable verifier stage</span>
+                    </label>
+
+                    {form.verifier_enabled ? (
+                      <>
+                        <label className="field">
+                          <span>Reuse verifier node</span>
+                          <select
+                            className="input"
+                            onChange={(e) => handleVerifierNodeSelect(e.target.value)}
+                            value={form.verifier_node_id ?? ""}
+                          >
+                            <option value="">Create a unique verifier node</option>
+                            {(builder?.nodes.verifiers ?? []).map((node) => (
+                              <option key={node.id} value={node.id}>
+                                {node.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="field">
+                          <span>Verifier node name</span>
+                          <input
+                            className="input"
+                            onChange={(e) =>
+                              setForm({ ...form, verifier_node_name: e.target.value })
+                            }
+                            value={form.verifier_node_name ?? ""}
+                          />
+                        </label>
+                        <label className="field">
+                          <span>Verifier platform</span>
+                          <select
+                            className="input"
+                            onChange={(e) =>
+                              setForm({ ...form, verifier_platform: e.target.value })
+                            }
+                            value={form.verifier_platform}
+                          >
+                            <option value="telegram">Telegram</option>
+                          </select>
+                        </label>
+                      </>
+                    ) : null}
+
+                    <div className="field helper-note">
+                      <span>Verifier behavior</span>
+                      <p>
+                        Telegram can be used here as a review inbox and can also still appear in
+                        your final output channels.
+                      </p>
+                    </div>
+                  </div>
+                  </article>
+              ) : null}
+
+              {inspectorNode === "channel" ? (
                   <article className="canvas-card inspector-card">
                   <div className="canvas-card-head">
                     <ReviewIcon className="shortcut-icon" />
@@ -1707,8 +1957,7 @@ export function ScoutsPage({
                     </div>
                   </div>
                   <p className="canvas-card-copy">
-                    Choose where the agent output should go and whether it needs
-                    review before release.
+                    Choose the final destinations for agent output after any optional verifier step.
                   </p>
 
                   <div className="settings-stack">
@@ -1790,37 +2039,19 @@ export function ScoutsPage({
                       </div>
                     </div>
 
-                    <label className="toggle-row">
-                      <input
-                        checked={form.telegram_review}
-                        onChange={(e) =>
-                          setForm({
-                            ...form,
-                            telegram_review: e.target.checked,
-                          })
-                        }
-                        type="checkbox"
-                      />
-                      <span>
-                        <ReviewIcon className="micro-icon" /> Require review
-                        before publish
-                      </span>
-                    </label>
-
                     <div className="field helper-note">
                       <span>Delivery note</span>
                       <p>
-                        This is still backed by the current scout model in the
-                        backend. The channel section controls output platforms
-                        and review behavior for that workflow.
+                        Final channels are where approved drafts land. If you need a review gate,
+                        configure it in the verifier step instead of mixing it into delivery.
                       </p>
                     </div>
                   </div>
                   </article>
               ) : null}
             </>
-          )}
-        </aside>
+          </aside>
+        ) : null}
       </section>
     </section>
   );

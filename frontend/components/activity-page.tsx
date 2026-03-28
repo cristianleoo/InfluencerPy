@@ -132,6 +132,9 @@ export function ActivityPage({
             </div>
             <div className="activity-meta">
               <span>{prettyLabel(post.platform)}</span>
+              {post.role === "verification" ? (
+                <span>Verifier for {post.delivery_targets.map(prettyLabel).join(", ")}</span>
+              ) : null}
               <span>{prettyLabel(post.status)}</span>
               <span>{formatTime(post.created_at)}</span>
             </div>
