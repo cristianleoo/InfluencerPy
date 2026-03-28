@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
 
 import {
@@ -1114,9 +1115,9 @@ export function ScoutsPage({
                     </p>
                     <div className="button-row">
                       {!flowGeneratorReady ? (
-                        <a className="button button-secondary" href={flowGenerator?.settings_path ?? "/settings"}>
+                        <Link className="button button-secondary" href={flowGenerator?.settings_path ?? "/settings"}>
                           Open settings
-                        </a>
+                        </Link>
                       ) : null}
                       <button
                         className="button button-primary"
@@ -1290,9 +1291,9 @@ export function ScoutsPage({
                     />
                     <div className="flow-ai-inline-actions">
                       {!flowGeneratorReady ? (
-                        <a className="button button-secondary" href={flowGenerator?.settings_path ?? "/settings"}>
+                        <Link className="button button-secondary" href={flowGenerator?.settings_path ?? "/settings"}>
                           Open settings
-                        </a>
+                        </Link>
                       ) : null}
                       <button
                         className="button button-primary"
