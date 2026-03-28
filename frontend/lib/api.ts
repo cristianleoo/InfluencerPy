@@ -266,6 +266,11 @@ export type DashboardSnapshot = {
 export type SettingsSnapshot = {
   config_file: string;
   env_file: string;
+  storage: {
+    env_readable: boolean;
+    env_writable: boolean;
+    config_writable: boolean;
+  };
   ai: {
     default_provider: string;
     gemini_model: string;

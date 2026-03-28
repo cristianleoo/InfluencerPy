@@ -33,6 +33,14 @@ export function SettingsPage({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
+  const storageIssues = settings
+    ? [
+        !settings.storage.env_readable ? "The mounted .env file is not readable by the app runtime." : null,
+        !settings.storage.env_writable ? "The mounted .env file is not writable, so saving credentials will fail." : null,
+        !settings.storage.config_writable ? "The config file is not writable, so saving model or embedding settings will fail." : null,
+      ].filter((issue): issue is string => Boolean(issue))
+    : [];
+
   const load = async () => {
     try {
       const data = await getSettings();
@@ -110,6 +118,20 @@ export function SettingsPage({
 
       {message ? <p className="feedback-banner success">{message}</p> : null}
       {error ? <p className="feedback-banner error">{error}</p> : null}
+      {storageIssues.length > 0 ? (
+        <div className="feedback-banner warning">
+          <strong>Settings storage needs attention.</strong>
+          <p>
+            InfluencerPy can read the page, but some settings files are not accessible to the runtime.
+            Fix the mounted file permissions before relying on saves from this screen.
+          </p>
+          <ul className="warning-list">
+            {storageIssues.map((issue) => (
+              <li key={issue}>{issue}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       <section className="two-column-grid">
         <article className="panel">
@@ -171,6 +193,18 @@ export function SettingsPage({
             </div>
           </div>
           <div className="status-cluster">
+            <div className={`status-tile ${settings?.storage.env_readable ? "good" : "warn"}`}>
+              <span>.env readability</span>
+              <strong>{settings?.storage.env_readable ? "Readable" : "Blocked"}</strong>
+            </div>
+            <div className={`status-tile ${settings?.storage.env_writable ? "good" : "warn"}`}>
+              <span>.env write access</span>
+              <strong>{settings?.storage.env_writable ? "Writable" : "Blocked"}</strong>
+            </div>
+            <div className={`status-tile ${settings?.storage.config_writable ? "good" : "warn"}`}>
+              <span>Config write access</span>
+              <strong>{settings?.storage.config_writable ? "Writable" : "Blocked"}</strong>
+            </div>
             {Object.entries(settings?.credentials ?? {}).map(([name, configured]) => (
               <div className={`status-tile ${configured ? "good" : "bad"}`} key={name}>
                 <span>{name}</span>

@@ -2249,6 +2249,28 @@ button {
   color: #ffc3d0;
 }
 
+.feedback-banner.warning {
+  display: grid;
+  gap: 8px;
+  background: rgba(255, 193, 92, 0.12);
+  color: #ffe2a8;
+}
+
+.feedback-banner.warning strong,
+.feedback-banner.warning p {
+  margin: 0;
+}
+
+.warning-list {
+  margin: 0;
+  padding-left: 18px;
+  color: #ffe8b9;
+}
+
+.warning-list li + li {
+  margin-top: 6px;
+}
+
 .hero-card {
   padding: 20px;
   display: flex;
