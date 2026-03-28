@@ -1680,6 +1680,7 @@ def dashboard():
 
 @app.command()
 def web(
+    backend_host: str = typer.Option("127.0.0.1", help="Dashboard API host"),
     backend_port: int = typer.Option(8000, help="Dashboard API port"),
     frontend_port: int = typer.Option(3000, help="Dashboard UI port"),
     no_browser: bool = typer.Option(False, help="Do not open the browser automatically"),
@@ -1693,6 +1694,7 @@ def web(
         config_manager.ensure_config_exists()
 
     launch_dashboard_stack(
+        backend_host=backend_host,
         backend_port=backend_port,
         frontend_port=frontend_port,
         open_browser=not no_browser,
