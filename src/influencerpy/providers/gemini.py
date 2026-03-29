@@ -7,14 +7,15 @@ from influencerpy.core.interfaces import AgentProvider
 class GeminiProvider(AgentProvider):
     """Gemini implementation using Strands Agents SDK."""
     
-    def __init__(self, model_id: str = "gemini-2.5-flash", temperature: float = 0.7):
+    def __init__(self, model_id: str = "gemini-2.5-flash", temperature: float = 0.7, api_key: str | None = None):
         self.model_id = model_id
         self.temperature = temperature
+        self.api_key = (api_key or "").strip()
         self._agent = None
         
     def get_model(self) -> GeminiModel:
         """Get the underlying Gemini model."""
-        api_key = os.getenv("GEMINI_API_KEY")
+        api_key = self.api_key or os.getenv("GEMINI_API_KEY")
         if not api_key:
             raise ValueError("GEMINI_API_KEY not found")
             

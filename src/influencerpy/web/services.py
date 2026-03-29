@@ -164,7 +164,7 @@ def _flow_generator_status() -> dict[str, Any]:
     model_id = (config_manager.get("ai.providers.gemini.default_model", "gemini-2.5-flash") or "").strip()
     connection_verified = bool(config_manager.get(GEMINI_VERIFIED_KEY, False))
     verified_at = config_manager.get(GEMINI_VERIFIED_AT_KEY)
-    gemini_api_key = os.getenv("GEMINI_API_KEY")
+    gemini_api_key = _get_effective_gemini_api_key()
     missing_requirements: list[str] = []
 
     if provider != "gemini":
@@ -190,6 +190,17 @@ def _flow_generator_status() -> dict[str, Any]:
         "missing_requirements": missing_requirements,
         "settings_path": "settings",
     }
+
+
+def _get_effective_gemini_api_key() -> str:
+    env_file_key = ""
+    if ENV_FILE.exists() and os.access(ENV_FILE, os.R_OK):
+        try:
+            env_file_key = str(dotenv_values(ENV_FILE).get("GEMINI_API_KEY") or "").strip()
+        except OSError:
+            env_file_key = ""
+    runtime_key = str(os.getenv("GEMINI_API_KEY") or "").strip()
+    return env_file_key or runtime_key
 
 
 def _set_gemini_verification_state(
@@ -1122,7 +1133,11 @@ def generate_flow_suggestion(payload: dict[str, Any]) -> dict[str, Any]:
     if not status["enabled"]:
         raise ValueError(" ".join(status["missing_requirements"]))
 
-    provider = GeminiProvider(model_id=status["model_id"], temperature=0.35)
+    provider = GeminiProvider(
+        model_id=status["model_id"],
+        temperature=0.35,
+        api_key=_get_effective_gemini_api_key(),
+    )
     try:
         raw_response = provider.generate(_build_flow_planner_prompt(prompt, status["model_id"]))
     except Exception as exc:
