@@ -199,7 +199,11 @@ def _get_effective_gemini_api_key() -> str:
             env_file_key = str(dotenv_values(ENV_FILE).get("GEMINI_API_KEY") or "").strip()
         except OSError:
             env_file_key = ""
+    if _is_redacted_placeholder(env_file_key):
+        env_file_key = ""
     runtime_key = str(os.getenv("GEMINI_API_KEY") or "").strip()
+    if _is_redacted_placeholder(runtime_key):
+        runtime_key = ""
     return env_file_key or runtime_key
 
 
@@ -268,6 +272,14 @@ def _is_path_effectively_writable(path: Path) -> bool:
     return os.access(path.parent, os.W_OK)
 
 
+def _is_redacted_placeholder(value: str | None) -> bool:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return False
+    upper = candidate.upper()
+    return upper.startswith("[REDACTED") or "REDACTED" in upper
+
+
 def _write_env_file_atomically(values: dict[str, str]) -> None:
     ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
     current = {
@@ -296,6 +308,12 @@ def _write_env_file_atomically(values: dict[str, str]) -> None:
 def _persist_env_credentials(values: dict[str, str]) -> None:
     if not values:
         return
+    invalid_keys = [key for key, value in values.items() if _is_redacted_placeholder(value)]
+    if invalid_keys:
+        raise RuntimeError(
+            "A redacted placeholder was provided instead of a real secret. "
+            f"Replace it with the actual credential for: {', '.join(invalid_keys)}."
+        )
     _write_env_file_atomically(values)
     for key, value in values.items():
         os.environ[key] = value
@@ -303,7 +321,8 @@ def _persist_env_credentials(values: dict[str, str]) -> None:
 
 
 def _effective_credential(payload: dict[str, Any], payload_key: str, env_key: str) -> str:
-    return str(payload.get(payload_key) or os.getenv(env_key, "") or "").strip()
+    candidate = str(payload.get(payload_key) or os.getenv(env_key, "") or "").strip()
+    return "" if _is_redacted_placeholder(candidate) else candidate
 
 
 def _fetch_gemini_models_for_api_key(api_key: str) -> list[str]:
@@ -2045,7 +2064,7 @@ def get_settings_snapshot() -> dict[str, Any]:
             "model_name": config_manager.get("embeddings.model_name"),
         },
         "credentials": {
-            "gemini": bool(os.getenv("GEMINI_API_KEY")),
+            "gemini": bool(_get_effective_gemini_api_key()),
             "telegram": bool(os.getenv("TELEGRAM_BOT_TOKEN")) and bool(os.getenv("TELEGRAM_CHAT_ID")),
             "x": all(
                 bool(os.getenv(key))
@@ -2137,6 +2156,11 @@ def save_and_test_gemini_settings(payload: dict[str, Any]) -> dict[str, Any]:
 
     if not next_api_key:
         raise RuntimeError("Add a Gemini API key before testing the connection.")
+    if _is_redacted_placeholder(next_api_key):
+        raise RuntimeError(
+            "The Gemini API key field contains a redacted placeholder, not a real key. "
+            "Paste the actual Gemini API key and try again."
+        )
     if not next_model:
         raise RuntimeError("Choose a Gemini model before testing the connection.")
 
