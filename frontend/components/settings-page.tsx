@@ -470,8 +470,16 @@ export function SettingsPage({
                     <p className="eyebrow">Step 1</p>
                     <h2>Connect Gemini</h2>
                   </div>
-                  <span className={`status-chip ${settings?.credentials.gemini ? "good" : "warn"}`}>
-                    {settings?.credentials.gemini ? "Ready" : "Required"}
+                  <span
+                    className={`status-chip ${
+                      settings?.ai.gemini_connection_verified
+                        ? "good"
+                        : settings?.credentials.gemini
+                          ? "warn"
+                          : "warn"
+                    }`}
+                  >
+                    {settings?.ai.gemini_connection_verified ? "Verified" : settings?.credentials.gemini ? "Test required" : "Required"}
                   </span>
                 </div>
                 <div className="settings-stack">
@@ -521,6 +529,11 @@ export function SettingsPage({
                       This saves the Gemini API key only after the connection test succeeds. Leaving the
                       field empty keeps the current saved key.
                     </p>
+                    {settings?.ai.gemini_connection_verified ? (
+                      <p>Gemini was verified successfully{settings.ai.gemini_connection_verified_at ? ` on ${new Date(settings.ai.gemini_connection_verified_at).toLocaleString()}` : ""}.</p>
+                    ) : settings?.credentials.gemini ? (
+                      <p>Gemini is saved, but it still needs a successful Save and test Gemini before the AI flow builder unlocks.</p>
+                    ) : null}
                   </div>
                 </div>
               </article>

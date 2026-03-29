@@ -149,6 +149,8 @@ export type ScoutBuilderSnapshot = {
     enabled: boolean;
     provider: string;
     model_id: string;
+    connection_verified: boolean;
+    connection_verified_at?: string | null;
     missing_requirements: string[];
     settings_path: string;
   };
@@ -216,6 +218,8 @@ export type ScoutPreview = {
 };
 
 export type FlowSuggestion = {
+  mode: "plan";
+  assistant_message: string;
   name: string;
   summary: string;
   prompt: string;
@@ -227,6 +231,19 @@ export type FlowSuggestion = {
     verifier: ScoutBuilderSnapshot["nodes"]["verifiers"][number] | null;
   };
 };
+
+export type FlowClarification = {
+  mode: "clarify";
+  assistant_message: string;
+  questions: string[];
+};
+
+export type PlannerMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type FlowPlannerResponse = FlowSuggestion | FlowClarification;
 
 export type Post = {
   id: number;
@@ -275,6 +292,8 @@ export type SettingsSnapshot = {
     default_provider: string;
     gemini_model: string;
     gemini_models: string[];
+    gemini_connection_verified: boolean;
+    gemini_connection_verified_at?: string | null;
   };
   embeddings: {
     enabled: boolean;
@@ -314,7 +333,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(detail || `Request failed: ${response.status}`);
+    try {
+      const parsed = JSON.parse(detail) as { detail?: string };
+      throw new Error(parsed.detail || detail || `Request failed: ${response.status}`);
+    } catch {
+      throw new Error(detail || `Request failed: ${response.status}`);
+    }
   }
 
   return response.json() as Promise<T>;
@@ -328,10 +352,13 @@ export function getScoutBuilder(): Promise<ScoutBuilderSnapshot> {
   return request<ScoutBuilderSnapshot>("/scout-builder");
 }
 
-export function generateFlowSuggestion(prompt: string): Promise<FlowSuggestion> {
-  return request<FlowSuggestion>("/flow-suggestions", {
+export function generateFlowSuggestion(
+  prompt: string,
+  messages?: PlannerMessage[],
+): Promise<FlowPlannerResponse> {
+  return request<FlowPlannerResponse>("/flow-suggestions", {
     method: "POST",
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, messages }),
   });
 }
 

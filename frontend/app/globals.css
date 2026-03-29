@@ -866,6 +866,48 @@ button {
   min-height: 88px;
 }
 
+.flow-ai-chat {
+  display: grid;
+  gap: 10px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.flow-ai-chat.compact {
+  max-height: 180px;
+}
+
+.flow-ai-message {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.flow-ai-message.assistant {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.flow-ai-message.user {
+  background: linear-gradient(135deg, rgba(72, 199, 255, 0.12), rgba(152, 93, 255, 0.12));
+  border-color: rgba(72, 199, 255, 0.18);
+}
+
+.flow-ai-message-role {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(218, 228, 249, 0.64);
+}
+
+.flow-ai-message p {
+  margin: 0;
+  line-height: 1.55;
+  white-space: pre-line;
+}
+
 .flow-ai-footer,
 .flow-ai-inline-row {
   display: flex;

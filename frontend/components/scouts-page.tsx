@@ -10,6 +10,7 @@ import {
   type DashboardSnapshot,
   generateFlowSuggestion,
   getScoutBuilder,
+  type PlannerMessage,
   type ScoutNode,
   type ScoutPreview,
   previewScoutNode,
@@ -286,6 +287,13 @@ export function ScoutsPage({
   const [generationPrompt, setGenerationPrompt] = useState("");
   const [generationSummary, setGenerationSummary] = useState<string | null>(null);
   const [isGeneratingFlow, setIsGeneratingFlow] = useState(false);
+  const [plannerMessages, setPlannerMessages] = useState<PlannerMessage[]>([
+    {
+      role: "assistant",
+      content:
+        "Tell me what kind of workflow you want to build. I can ask follow-up questions, then draft the canvas for you.",
+    },
+  ]);
   const [isPending, startTransition] = useTransition();
 
   const selectedScout = useMemo(
@@ -728,7 +736,7 @@ export function ScoutsPage({
 
   const handleGenerateFlow = async () => {
     if (!generationPrompt.trim()) {
-      setError("Describe the workflow you want to build first.");
+      setError("Tell the flow agent what you want to build first.");
       return;
     }
     if (!flowGeneratorReady) {
@@ -736,15 +744,39 @@ export function ScoutsPage({
       return;
     }
 
+    const nextMessages: PlannerMessage[] = [
+      ...plannerMessages,
+      { role: "user", content: generationPrompt.trim() },
+    ];
+
     setIsGeneratingFlow(true);
     try {
-      const suggestion = await generateFlowSuggestion(generationPrompt);
+      const response = await generateFlowSuggestion(generationPrompt, nextMessages);
+      setPlannerMessages([
+        ...nextMessages,
+        {
+          role: "assistant",
+          content:
+            response.mode === "clarify"
+              ? [response.assistant_message, ...response.questions.map((question, index) => `${index + 1}. ${question}`)].join("\n")
+              : response.assistant_message,
+        },
+      ]);
+      setGenerationPrompt("");
+
+      if (response.mode === "clarify") {
+        setGenerationSummary("The agent needs a bit more context before drafting the canvas.");
+        setNotice(null);
+        setError(null);
+        return;
+      }
+
       const nextBuilder = await getScoutBuilder();
       setBuilder(nextBuilder);
       setSelectedScoutId("new");
-      setForm({ ...scoutToPayload(null), ...suggestion.payload });
-      setGenerationSummary(suggestion.summary || `Generated ${suggestion.name}`);
-      setNotice(`Generated draft flow: ${suggestion.name}`);
+      setForm({ ...scoutToPayload(null), ...response.payload });
+      setGenerationSummary(response.summary || `Generated ${response.name}`);
+      setNotice(`Generated draft flow: ${response.name}`);
       setError(null);
       setInspectorNode(null);
       setSelectedGraphBlockId(null);
@@ -1093,11 +1125,24 @@ export function ScoutsPage({
                   <div className="flow-ai-planner-head">
                     <div>
                       <p className="eyebrow">AI Flow Builder</p>
-                      <strong>Describe the workflow and let an agent draft the canvas.</strong>
+                      <strong>Chat with the agent and let it draft the canvas with you.</strong>
                     </div>
                     <span className={`flow-ai-status ${flowGeneratorReady ? "ready" : "locked"}`}>
                       {flowGeneratorReady ? "Ready" : "Setup required"}
                     </span>
+                  </div>
+                  <div className="flow-ai-chat">
+                    {plannerMessages.map((message, index) => (
+                      <div
+                        className={`flow-ai-message ${message.role === "assistant" ? "assistant" : "user"}`}
+                        key={`${message.role}-${index}`}
+                      >
+                        <span className="flow-ai-message-role">
+                          {message.role === "assistant" ? "Agent" : "You"}
+                        </span>
+                        <p>{message.content}</p>
+                      </div>
+                    ))}
                   </div>
                   <textarea
                     className="input textarea flow-ai-textarea"
@@ -1110,7 +1155,7 @@ export function ScoutsPage({
                   <div className="flow-ai-footer">
                     <p>
                       {flowGeneratorReady
-                        ? "The planner uses the configured Gemini model to create draft nodes for the canvas."
+                        ? "The agent can ask follow-up questions first, then create draft nodes for the canvas."
                         : flowGenerator?.missing_requirements?.[0] ?? "Configure Gemini in Settings to enable AI flow generation."}
                     </p>
                     <div className="button-row">
@@ -1125,7 +1170,7 @@ export function ScoutsPage({
                         onClick={handleGenerateFlow}
                         type="button"
                       >
-                        {isGeneratingFlow ? "Generating…" : "Generate canvas"}
+                        {isGeneratingFlow ? "Thinking…" : "Send to agent"}
                       </button>
                     </div>
                   </div>
@@ -1274,18 +1319,31 @@ export function ScoutsPage({
                   <div className="flow-ai-planner-head">
                     <div>
                       <p className="eyebrow">AI Flow Builder</p>
-                      <strong>Draft this canvas from a plain-English prompt.</strong>
+                      <strong>Refine this flow with the agent before it drafts the next canvas state.</strong>
                     </div>
                     <span className={`flow-ai-status ${flowGeneratorReady ? "ready" : "locked"}`}>
                       {flowGeneratorReady ? "Agent ready" : "Setup required"}
                     </span>
+                  </div>
+                  <div className="flow-ai-chat compact">
+                    {plannerMessages.map((message, index) => (
+                      <div
+                        className={`flow-ai-message ${message.role === "assistant" ? "assistant" : "user"}`}
+                        key={`inline-${message.role}-${index}`}
+                      >
+                        <span className="flow-ai-message-role">
+                          {message.role === "assistant" ? "Agent" : "You"}
+                        </span>
+                        <p>{message.content}</p>
+                      </div>
+                    ))}
                   </div>
                   <div className="flow-ai-inline-row">
                     <textarea
                       className="input textarea flow-ai-textarea compact"
                       disabled={!flowGeneratorReady || isGeneratingFlow}
                       onChange={(e) => setGenerationPrompt(e.target.value)}
-                      placeholder="Describe the workflow you want to build. This will create a new draft canvas with scout, agent, policy, verifier, and output nodes as needed."
+                      placeholder="Reply to the agent with more detail, or describe a fresh workflow. It will ask follow-up questions when needed before drafting the next canvas."
                       rows={3}
                       value={generationPrompt}
                     />
@@ -1301,13 +1359,13 @@ export function ScoutsPage({
                         onClick={handleGenerateFlow}
                         type="button"
                       >
-                        {isGeneratingFlow ? "Generating…" : "Generate new draft"}
+                        {isGeneratingFlow ? "Thinking…" : "Send to agent"}
                       </button>
                     </div>
                   </div>
                   <p className="flow-ai-inline-note">
                     {flowGeneratorReady
-                      ? "The planner runs through a Gemini-backed agent and creates draft nodes you can review before saving the flow."
+                      ? "The planner runs through a Gemini-backed agent, asks clarifying questions when needed, and then drafts nodes you can review before saving."
                       : flowGenerator?.missing_requirements?.[0] ?? "Configure Gemini in Settings to enable AI flow generation."}
                   </p>
                   {generationSummary ? <p className="flow-ai-summary">{generationSummary}</p> : null}

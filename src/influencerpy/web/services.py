@@ -102,6 +102,9 @@ CURATED_GEMINI_MODELS = [
     "gemini-2.5-flash-lite",
 ]
 
+GEMINI_VERIFIED_KEY = "ai.providers.gemini.connection_verified"
+GEMINI_VERIFIED_AT_KEY = "ai.providers.gemini.connection_verified_at"
+
 
 def _safe_json_loads(raw: str | None, fallback: Any) -> Any:
     if not raw:
@@ -151,6 +154,8 @@ def _flow_generator_status() -> dict[str, Any]:
 
     provider = config_manager.get("ai.default_provider", "gemini")
     model_id = (config_manager.get("ai.providers.gemini.default_model", "gemini-2.5-flash") or "").strip()
+    connection_verified = bool(config_manager.get(GEMINI_VERIFIED_KEY, False))
+    verified_at = config_manager.get(GEMINI_VERIFIED_AT_KEY)
     missing_requirements: list[str] = []
 
     if provider != "gemini":
@@ -159,14 +164,37 @@ def _flow_generator_status() -> dict[str, Any]:
         missing_requirements.append("Add a Gemini API key in Settings.")
     if not model_id:
         missing_requirements.append("Choose a Gemini model in Settings.")
+    if os.getenv("GEMINI_API_KEY") and not connection_verified:
+        missing_requirements.append("Save and test Gemini in Settings before using the AI flow builder.")
 
     return {
         "enabled": not missing_requirements,
         "provider": provider,
         "model_id": model_id or "gemini-2.5-flash",
+        "connection_verified": connection_verified,
+        "connection_verified_at": verified_at,
         "missing_requirements": missing_requirements,
         "settings_path": "settings",
     }
+
+
+def _set_gemini_verification_state(
+    config_manager: ConfigManager,
+    *,
+    verified: bool,
+    verified_at: str | None = None,
+) -> None:
+    config_manager.set(GEMINI_VERIFIED_KEY, verified)
+    config_manager.set(GEMINI_VERIFIED_AT_KEY, verified_at if verified else None)
+
+
+def _friendly_gemini_error(exc: Exception) -> str:
+    raw = str(exc)
+    if "API_KEY_INVALID" in raw or "API key not valid" in raw:
+        return "Gemini rejected the saved API key. Open Settings and use Save and test Gemini to store a valid key."
+    if "GEMINI_API_KEY not found" in raw:
+        return "Add a Gemini API key in Settings before using the AI flow builder."
+    return f"Gemini could not generate the flow right now: {raw}"
 
 
 def _safe_load_settings_env() -> bool:
@@ -994,8 +1022,19 @@ def _build_flow_planner_prompt(user_prompt: str, model_id: str) -> str:
     return f"""
 You are planning an InfluencerPy workflow graph.
 
-The user will describe the automation they want. Produce only valid JSON with this shape:
+The user will describe the automation they want. Produce only valid JSON.
+
+If the request is missing important information, respond with:
 {{
+  "mode": "clarify",
+  "assistant_message": "short helpful response",
+  "questions": ["question 1", "question 2"]
+}}
+
+If the request is specific enough, respond with:
+{{
+  "mode": "plan",
+  "assistant_message": "short helpful summary of what you built",
   "name": "short flow name",
   "summary": "one sentence summary",
   "scouts": [
@@ -1042,17 +1081,26 @@ Rules:
 - Agents transform scout outputs into content. Agents do not own scout sources.
 - Channels are final outputs. A flow can have multiple channels.
 - Use manual scheduling unless the request clearly asks for a schedule.
+- Ask for clarification when the user did not make the sources, transformation goal, or outputs clear enough to build a good flow.
 - Be practical and concise. Keep names product-like.
 - The configured model for generation is {model_id}.
 - Return JSON only. No markdown fences.
 
-User request:
+Conversation:
 {user_prompt.strip()}
 """.strip()
 
 
 def generate_flow_suggestion(payload: dict[str, Any]) -> dict[str, Any]:
-    prompt = str(payload.get("prompt") or "").strip()
+    messages = payload.get("messages")
+    if isinstance(messages, list) and messages:
+        prompt = "\n".join(
+            f"{str(message.get('role') or 'user').strip().upper()}: {str(message.get('content') or '').strip()}"
+            for message in messages
+            if isinstance(message, dict) and str(message.get("content") or "").strip()
+        ).strip()
+    else:
+        prompt = str(payload.get("prompt") or "").strip()
     if not prompt:
         raise ValueError("Describe the workflow you want to build.")
 
@@ -1061,8 +1109,29 @@ def generate_flow_suggestion(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(" ".join(status["missing_requirements"]))
 
     provider = GeminiProvider(model_id=status["model_id"], temperature=0.35)
-    raw_response = provider.generate(_build_flow_planner_prompt(prompt, status["model_id"]))
+    try:
+        raw_response = provider.generate(_build_flow_planner_prompt(prompt, status["model_id"]))
+    except Exception as exc:
+        raise ValueError(_friendly_gemini_error(exc)) from exc
     planned = _extract_json_object(raw_response)
+
+    mode = str(planned.get("mode") or "plan").strip().lower()
+    assistant_message = str(planned.get("assistant_message") or "").strip()
+    if mode == "clarify":
+        questions = [
+            str(item).strip()
+            for item in planned.get("questions", [])
+            if str(item).strip()
+        ][:3]
+        if not assistant_message:
+            assistant_message = "I need a bit more context before I can draft a strong flow."
+        if not questions:
+            questions = ["Which sources should this flow listen to?", "Where should the output go?"]
+        return {
+            "mode": "clarify",
+            "assistant_message": assistant_message,
+            "questions": questions,
+        }
 
     scouts = planned.get("scouts", [])
     channels = planned.get("channels", [])
@@ -1168,10 +1237,12 @@ def generate_flow_suggestion(payload: dict[str, Any]) -> dict[str, Any]:
 
         session.commit()
 
-        return {
-            "name": flow_name,
-            "summary": summary,
-            "prompt": prompt,
+    return {
+        "mode": "plan",
+        "assistant_message": assistant_message or summary or f"Drafted {flow_name}.",
+        "name": flow_name,
+        "summary": summary,
+        "prompt": prompt,
             "payload": {
                 "name": flow_name,
                 "scout_node_id": scout_nodes[0].id,
@@ -1916,6 +1987,8 @@ def get_settings_snapshot() -> dict[str, Any]:
             "default_provider": config_manager.get("ai.default_provider", "gemini"),
             "gemini_model": config_manager.get("ai.providers.gemini.default_model", "gemini-2.5-flash"),
             "gemini_models": get_gemini_models(),
+            "gemini_connection_verified": bool(config_manager.get(GEMINI_VERIFIED_KEY, False)),
+            "gemini_connection_verified_at": config_manager.get(GEMINI_VERIFIED_AT_KEY),
         },
         "embeddings": {
             "enabled": config_manager.get("embeddings.enabled", True),
@@ -1953,6 +2026,8 @@ def update_settings(payload: dict[str, Any]) -> dict[str, Any]:
     ai = payload.get("ai", {})
     embeddings = payload.get("embeddings", {})
     credentials = payload.get("credentials", {})
+    previous_model = str(config_manager.get("ai.providers.gemini.default_model", "gemini-2.5-flash") or "").strip()
+    previous_key = str(os.getenv("GEMINI_API_KEY", "") or "").strip()
 
     if "default_provider" in ai:
         config_manager.set("ai.default_provider", ai["default_provider"])
@@ -1991,6 +2066,10 @@ def update_settings(payload: dict[str, Any]) -> dict[str, Any]:
         _write_env_file_atomically(env_updates)
 
     _safe_load_settings_env()
+    next_model = str(config_manager.get("ai.providers.gemini.default_model", "gemini-2.5-flash") or "").strip()
+    next_key = str(os.getenv("GEMINI_API_KEY", "") or "").strip()
+    if previous_model != next_model or previous_key != next_key:
+        _set_gemini_verification_state(config_manager, verified=False)
     return get_settings_snapshot()
 
 
@@ -2024,6 +2103,11 @@ def save_and_test_gemini_settings(payload: dict[str, Any]) -> dict[str, Any]:
 
     config_manager.set("ai.default_provider", "gemini")
     config_manager.set("ai.providers.gemini.default_model", next_model)
+    _set_gemini_verification_state(
+        config_manager,
+        verified=True,
+        verified_at=datetime.utcnow().isoformat(),
+    )
     _write_env_file_atomically({"GEMINI_API_KEY": next_api_key})
     os.environ["GEMINI_API_KEY"] = next_api_key
     _safe_load_settings_env()
