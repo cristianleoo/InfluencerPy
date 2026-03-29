@@ -2146,6 +2146,21 @@ def save_and_test_gemini_settings(payload: dict[str, Any]) -> dict[str, Any]:
     if next_model not in available_models:
         available_models = _dedupe_keep_order(available_models + [next_model])
 
+    try:
+        provider = GeminiProvider(
+            model_id=next_model,
+            temperature=0,
+            api_key=next_api_key,
+        )
+        provider.generate(
+            "Reply with exactly OK. No punctuation, no explanation."
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "Gemini connection failed during a generation test. "
+            f"Use a valid key and model combination. Details: {_friendly_gemini_error(exc)}"
+        ) from exc
+
     config_manager.set("ai.default_provider", "gemini")
     config_manager.set("ai.providers.gemini.default_model", next_model)
     _set_gemini_verification_state(
