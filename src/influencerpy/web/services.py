@@ -150,21 +150,34 @@ def _extract_json_object(raw: str) -> dict[str, Any]:
 def _flow_generator_status() -> dict[str, Any]:
     config_manager = ConfigManager()
     config_manager.ensure_config_exists()
-    load_dotenv(dotenv_path=ENV_FILE, override=True)
+    env_readable = True
+    if ENV_FILE.exists():
+        if os.access(ENV_FILE, os.R_OK):
+            try:
+                load_dotenv(dotenv_path=ENV_FILE, override=True)
+            except OSError:
+                env_readable = False
+        else:
+            env_readable = False
 
     provider = config_manager.get("ai.default_provider", "gemini")
     model_id = (config_manager.get("ai.providers.gemini.default_model", "gemini-2.5-flash") or "").strip()
     connection_verified = bool(config_manager.get(GEMINI_VERIFIED_KEY, False))
     verified_at = config_manager.get(GEMINI_VERIFIED_AT_KEY)
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
     missing_requirements: list[str] = []
 
     if provider != "gemini":
         missing_requirements.append("Set Gemini as the default AI provider in Settings.")
-    if not os.getenv("GEMINI_API_KEY"):
+    if not gemini_api_key:
         missing_requirements.append("Add a Gemini API key in Settings.")
+    if not env_readable and not gemini_api_key:
+        missing_requirements.append(
+            "The settings .env file is not readable in this runtime. Fix storage permissions in Settings before using the AI flow builder."
+        )
     if not model_id:
         missing_requirements.append("Choose a Gemini model in Settings.")
-    if os.getenv("GEMINI_API_KEY") and not connection_verified:
+    if gemini_api_key and not connection_verified:
         missing_requirements.append("Save and test Gemini in Settings before using the AI flow builder.")
 
     return {
@@ -173,6 +186,7 @@ def _flow_generator_status() -> dict[str, Any]:
         "model_id": model_id or "gemini-2.5-flash",
         "connection_verified": connection_verified,
         "connection_verified_at": verified_at,
+        "env_readable": env_readable,
         "missing_requirements": missing_requirements,
         "settings_path": "settings",
     }
