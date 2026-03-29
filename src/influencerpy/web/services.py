@@ -229,7 +229,7 @@ def _friendly_gemini_error(exc: Exception) -> str:
 def _safe_load_settings_env() -> bool:
     try:
         if ENV_FILE.exists():
-            if not os.access(ENV_FILE, os.R_OK):
+            if not _is_path_readable(ENV_FILE):
                 return False
             load_dotenv(dotenv_path=ENV_FILE, override=True)
         return True
@@ -237,39 +237,68 @@ def _safe_load_settings_env() -> bool:
         return False
 
 
+def _is_path_readable(path: Path) -> bool:
+    if not path.exists():
+        return True
+    try:
+        path.read_text(encoding="utf-8", errors="ignore")
+        return True
+    except OSError:
+        return False
+
+
+def _can_replace_in_dir(path: Path) -> bool:
+    directory = path.parent
+    directory.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=directory,
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            handle.write("")
+        return True
+    except OSError:
+        return False
+    finally:
+        if temp_path and temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+
+
 def _ensure_settings_storage_writable() -> None:
     ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-    if CONFIG_FILE.exists() and not os.access(CONFIG_FILE, os.R_OK):
+    if CONFIG_FILE.exists() and not _is_path_readable(CONFIG_FILE):
         raise RuntimeError(
             f"Settings storage is not readable: {CONFIG_FILE}. Fix file permissions and try again."
         )
-    if ENV_FILE.exists() and not os.access(ENV_FILE, os.R_OK):
+    if ENV_FILE.exists() and not _is_path_readable(ENV_FILE):
         raise RuntimeError(
             f"Settings storage is not readable: {ENV_FILE}. Fix file permissions and try again."
         )
 
-    config_replacable = os.access(CONFIG_FILE, os.W_OK) if CONFIG_FILE.exists() else False
-    env_replacable = os.access(ENV_FILE, os.W_OK) if ENV_FILE.exists() else False
+    config_replacable = _can_replace_in_dir(CONFIG_FILE)
+    env_replacable = _can_replace_in_dir(ENV_FILE)
 
-    if CONFIG_FILE.exists() and not config_replacable and not os.access(CONFIG_FILE.parent, os.W_OK):
+    if CONFIG_FILE.exists() and not config_replacable:
         raise RuntimeError(
             f"Settings storage is not writable: {CONFIG_FILE}. Fix file permissions and try again."
         )
-    if ENV_FILE.exists() and not env_replacable and not os.access(ENV_FILE.parent, os.W_OK):
+    if ENV_FILE.exists() and not env_replacable:
         raise RuntimeError(
             f"Settings storage is not writable: {ENV_FILE}. Fix file permissions and try again."
         )
-    if not ENV_FILE.exists() and not os.access(ENV_FILE.parent, os.W_OK):
+    if not ENV_FILE.exists() and not env_replacable:
         raise RuntimeError(
             f"Settings storage directory is not writable: {ENV_FILE.parent}. Fix file permissions and try again."
         )
 
 
 def _is_path_effectively_writable(path: Path) -> bool:
-    if path.exists():
-        return os.access(path, os.W_OK) or os.access(path.parent, os.W_OK)
-    return os.access(path.parent, os.W_OK)
+    return _can_replace_in_dir(path)
 
 
 def _is_redacted_placeholder(value: str | None) -> bool:
