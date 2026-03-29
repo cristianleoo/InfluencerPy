@@ -111,6 +111,8 @@ def launch_dashboard_stack(
     frontend_port = _find_available_port("127.0.0.1", frontend_port)
 
     api_url = f"http://{backend_host}:{backend_port}"
+    api_connect_host = "127.0.0.1" if backend_host == "0.0.0.0" else backend_host
+    api_connect_url = f"http://{api_connect_host}:{backend_port}"
     frontend_url = f"http://127.0.0.1:{frontend_port}"
 
     print(f"Starting dashboard API on {api_url}")
@@ -131,11 +133,11 @@ def launch_dashboard_stack(
         env=os.environ.copy(),
     )
 
-    _wait_for_http_ready(f"{api_url}/api/health")
+    _wait_for_http_ready(f"{api_connect_url}/api/health")
 
     frontend_env = os.environ.copy()
-    frontend_env["NEXT_PUBLIC_API_BASE_URL"] = f"{api_url}/api"
-    frontend_env["INFLUENCERPY_API_BASE_URL"] = f"{api_url}/api"
+    frontend_env["NEXT_PUBLIC_API_BASE_URL"] = f"{api_connect_url}/api"
+    frontend_env["INFLUENCERPY_API_BASE_URL"] = f"{api_connect_url}/api"
     frontend_env["PORT"] = str(frontend_port)
 
     _ensure_frontend_build(frontend_env)
