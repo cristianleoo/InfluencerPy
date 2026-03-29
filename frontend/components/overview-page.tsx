@@ -75,6 +75,7 @@ export function OverviewPage({
   const topScout = snapshot.scouts[0] ?? null;
   const hasPendingReviews = snapshot.stats.pending_reviews > 0;
   const isBotRunning = snapshot.system.bot_running;
+  const automationStatusLabel = isBotRunning ? "Automation running" : "Automation stopped";
 
   const nextAction = hasPendingReviews
     ? {
@@ -104,7 +105,7 @@ export function OverviewPage({
               ? `You have ${snapshot.stats.pending_reviews} draft${snapshot.stats.pending_reviews === 1 ? "" : "s"} waiting for review.`
               : isBotRunning
                 ? "Your workflow is running smoothly."
-                : "Automation is currently offline."}
+                : "Your workspace is online, but automation is stopped."}
           </h2>
           <p className="home-summary-text">
             Use home as your operator surface. Check the system state, pick the
@@ -113,9 +114,13 @@ export function OverviewPage({
           </p>
 
           <div className="signal-strip">
-            <div className={`signal-chip ${statusTone(isBotRunning ? "online" : "offline")}`}>
+            <div className={`signal-chip ${statusTone("online")}`}>
               <span className="signal-dot" />
-              {isBotRunning ? "System online" : "System offline"}
+              Workspace online
+            </div>
+            <div className={`signal-chip ${statusTone(isBotRunning ? "online" : "pending")}`}>
+              <span className="signal-dot" />
+              {automationStatusLabel}
             </div>
             <div className="signal-chip neutral">{snapshot.stats.scheduled_scouts} scheduled scouts</div>
             <div className="signal-chip neutral">Updated {formatTime(snapshot.system.updated_at)}</div>
