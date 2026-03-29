@@ -1141,7 +1141,12 @@ def generate_flow_suggestion(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         raw_response = provider.generate(_build_flow_planner_prompt(prompt, status["model_id"]))
     except Exception as exc:
-        raise ValueError(_friendly_gemini_error(exc)) from exc
+        friendly_error = _friendly_gemini_error(exc)
+        if "Gemini rejected the saved API key" in friendly_error:
+            config_manager = ConfigManager()
+            config_manager.ensure_config_exists()
+            _set_gemini_verification_state(config_manager, verified=False)
+        raise ValueError(friendly_error) from exc
     planned = _extract_json_object(raw_response)
 
     mode = str(planned.get("mode") or "plan").strip().lower()
