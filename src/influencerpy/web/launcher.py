@@ -133,7 +133,7 @@ def launch_dashboard_stack(
         env=os.environ.copy(),
     )
 
-    _wait_for_http_ready(f"{api_connect_url}/api/health")
+    _wait_for_http_ready(f"{api_connect_url}/api/health", timeout_seconds=45.0)
 
     frontend_env = os.environ.copy()
     frontend_env["NEXT_PUBLIC_API_BASE_URL"] = f"{api_connect_url}/api"
@@ -148,7 +148,7 @@ def launch_dashboard_stack(
         env=frontend_env,
     )
 
-    _wait_for_http_ready(frontend_url, timeout_seconds=30.0)
+    _wait_for_http_ready(frontend_url, timeout_seconds=60.0)
 
     if open_browser:
         webbrowser.open(frontend_url)
