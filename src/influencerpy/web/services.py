@@ -1176,66 +1176,73 @@ def generate_flow_suggestion(payload: dict[str, Any]) -> dict[str, Any]:
     if verifier_platform not in SUPPORTED_FLOW_CHANNELS:
         verifier_platform = "telegram"
 
-    with next(get_session()) as session:
-        scout_nodes: list[ScoutNodeModel] = []
-        for scout_spec in normalized_scouts:
-            node = ScoutNodeModel(
-                name=scout_spec["name"],
-                type=scout_spec["type"],
-                config_json=json.dumps(_build_scout_config(scout_spec)),
-                schedule_cron=scout_spec["schedule_cron"],
-            )
-            session.add(node)
-            session.flush()
-            scout_nodes.append(node)
-
-        agent_payload = {
-            "provider": "gemini",
-            "model_id": status["model_id"],
-            "temperature": temperature,
-            "flow_policy": flow_policy,
-            "image_generation": bool(agent.get("image_generation")),
-        }
-        agent_node = AgentNodeModel(
-            name=str(agent.get("name") or f"{flow_name} Agent").strip() or f"{flow_name} Agent",
-            intent=agent_intent,
-            prompt_template=str(
-                agent.get("prompt_template")
-                or (
-                    "Turn the incoming scout context into a concise, useful digest."
-                    if agent_intent == "scouting"
-                    else "Turn the incoming scout context into a publish-ready draft."
-                )
-            ).strip(),
-            config_json=json.dumps(_build_agent_config(agent_payload)),
+    agent_payload = {
+        "provider": "gemini",
+        "model_id": status["model_id"],
+        "temperature": temperature,
+        "flow_policy": flow_policy,
+        "image_generation": bool(agent.get("image_generation")),
+    }
+    agent_name = str(agent.get("name") or f"{flow_name} Agent").strip() or f"{flow_name} Agent"
+    agent_prompt = str(
+        agent.get("prompt_template")
+        or (
+            "Turn the incoming scout context into a concise, useful digest."
+            if agent_intent == "scouting"
+            else "Turn the incoming scout context into a publish-ready draft."
         )
-        session.add(agent_node)
-        session.flush()
+    ).strip()
+    verifier_name = (
+        str(verifier.get("name") or f"{flow_name} Verifier").strip() or f"{flow_name} Verifier"
+    )
 
-        channel_nodes: list[ChannelNodeModel] = []
-        for channel_spec in normalized_channels:
-            node = ChannelNodeModel(
-                name=channel_spec["name"],
-                platforms=json.dumps(channel_spec["platforms"]),
-                telegram_review=False,
-                config_json=json.dumps({"kind": "channel"}),
-            )
-            session.add(node)
-            session.flush()
-            channel_nodes.append(node)
+    draft_scout_nodes = [
+        {
+            "id": -(index + 1),
+            "name": scout_spec["name"],
+            "type": scout_spec["type"],
+            "schedule_cron": scout_spec["schedule_cron"],
+            "last_run": None,
+            "created_at": None,
+            "config": _build_scout_config(scout_spec),
+        }
+        for index, scout_spec in enumerate(normalized_scouts)
+    ]
+    draft_channel_nodes = [
+        {
+            "id": -(100 + index + 1),
+            "name": channel_spec["name"],
+            "platforms": channel_spec["platforms"],
+            "telegram_review": False,
+            "kind": "channel",
+            "created_at": None,
+            "config": {"kind": "channel"},
+        }
+        for index, channel_spec in enumerate(normalized_channels)
+    ]
+    draft_agent_node = {
+        "id": -200,
+        "name": agent_name,
+        "intent": agent_intent,
+        "prompt_template": agent_prompt,
+        "created_at": None,
+        "config": _build_agent_config(agent_payload),
+    }
+    draft_verifier_node = (
+        {
+            "id": -300,
+            "name": verifier_name,
+            "platforms": [verifier_platform],
+            "telegram_review": False,
+            "kind": "verifier",
+            "created_at": None,
+            "config": {"kind": "verifier"},
+        }
+        if verifier_enabled
+        else None
+    )
 
-        verifier_node = None
-        if verifier_enabled:
-            verifier_node = ChannelNodeModel(
-                name=str(verifier.get("name") or f"{flow_name} Verifier").strip() or f"{flow_name} Verifier",
-                platforms=json.dumps([verifier_platform]),
-                telegram_review=False,
-                config_json=json.dumps({"kind": "verifier"}),
-            )
-            session.add(verifier_node)
-            session.flush()
-
-        session.commit()
+    primary_scout_config = draft_scout_nodes[0]["config"]
 
     return {
         "mode": "plan",
@@ -1243,40 +1250,49 @@ def generate_flow_suggestion(payload: dict[str, Any]) -> dict[str, Any]:
         "name": flow_name,
         "summary": summary,
         "prompt": prompt,
-            "payload": {
-                "name": flow_name,
-                "scout_node_id": scout_nodes[0].id,
-                "scout_node_ids": [node.id for node in scout_nodes if node.id is not None],
-                "scout_node_name": scout_nodes[0].name,
-                "agent_node_id": agent_node.id,
-                "agent_node_name": agent_node.name,
-                "channel_node_id": channel_nodes[0].id,
-                "channel_node_ids": [node.id for node in channel_nodes if node.id is not None],
-                "channel_node_name": channel_nodes[0].name,
-                "verifier_enabled": verifier_enabled,
-                "verifier_node_id": verifier_node.id if verifier_node and verifier_node.id is not None else None,
-                "verifier_node_name": verifier_node.name if verifier_node else "",
-                "verifier_platform": verifier_platform,
-                "type": scout_nodes[0].type,
-                "intent": agent_node.intent,
-                "schedule_cron": scout_nodes[0].schedule_cron,
-                "tools": SCOUT_TYPE_TOOL_DEFAULTS.get(scout_nodes[0].type, [scout_nodes[0].type]),
-                "prompt_template": agent_node.prompt_template or "",
-                "telegram_review": False,
-                "platforms": normalized_channels[0]["platforms"],
-                "image_generation": bool(agent_payload["image_generation"]),
-                "provider": "gemini",
-                "model_id": status["model_id"],
-                "temperature": temperature,
-                "flow_policy": flow_policy,
-            },
-            "nodes": {
-                "scouts": [serialize_scout_node(node) for node in scout_nodes],
-                "agent": serialize_agent_node(agent_node),
-                "channels": [serialize_channel_node(node) for node in channel_nodes],
-                "verifier": serialize_channel_node(verifier_node) if verifier_node else None,
-            },
-        }
+        "payload": {
+            "name": flow_name,
+            "scout_node_id": None,
+            "scout_node_ids": [],
+            "scout_node_name": draft_scout_nodes[0]["name"],
+            "agent_node_id": None,
+            "agent_node_name": draft_agent_node["name"],
+            "channel_node_id": None,
+            "channel_node_ids": [],
+            "channel_node_name": draft_channel_nodes[0]["name"],
+            "verifier_enabled": verifier_enabled,
+            "verifier_node_id": None,
+            "verifier_node_name": verifier_name if verifier_enabled else "",
+            "verifier_platform": verifier_platform,
+            "type": draft_scout_nodes[0]["type"],
+            "intent": draft_agent_node["intent"],
+            "schedule_cron": draft_scout_nodes[0]["schedule_cron"],
+            "tools": SCOUT_TYPE_TOOL_DEFAULTS.get(draft_scout_nodes[0]["type"], [draft_scout_nodes[0]["type"]]),
+            "prompt_template": draft_agent_node["prompt_template"] or "",
+            "telegram_review": False,
+            "platforms": normalized_channels[0]["platforms"],
+            "image_generation": bool(agent_payload["image_generation"]),
+            "provider": "gemini",
+            "model_id": status["model_id"],
+            "temperature": temperature,
+            "flow_policy": flow_policy,
+            "query": str(primary_scout_config.get("query") or ""),
+            "feeds": list(primary_scout_config.get("feeds") or [""]),
+            "subreddits": list(primary_scout_config.get("subreddits") or [""]),
+            "reddit_sort": str(primary_scout_config.get("reddit_sort") or "hot"),
+            "newsletter_url": str(primary_scout_config.get("newsletter_url") or ""),
+            "substack_sort": str(primary_scout_config.get("substack_sort") or "new"),
+            "url": str(primary_scout_config.get("url") or ""),
+            "date_filter": str(primary_scout_config.get("date_filter") or ""),
+        },
+        "nodes": {
+            "scouts": draft_scout_nodes,
+            "agent": draft_agent_node,
+            "channels": draft_channel_nodes,
+            "verifier": draft_verifier_node,
+        },
+        "draft_only": True,
+    }
 
 
 def create_scout_node(payload: dict[str, Any]) -> dict[str, Any]:

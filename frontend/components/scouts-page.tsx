@@ -10,6 +10,7 @@ import {
   type DashboardSnapshot,
   generateFlowSuggestion,
   getScoutBuilder,
+  type FlowSuggestion,
   type PlannerMessage,
   type ScoutNode,
   type ScoutPreview,
@@ -287,6 +288,8 @@ export function ScoutsPage({
   const [generationPrompt, setGenerationPrompt] = useState("");
   const [generationSummary, setGenerationSummary] = useState<string | null>(null);
   const [isGeneratingFlow, setIsGeneratingFlow] = useState(false);
+  const [isPlannerOpen, setIsPlannerOpen] = useState(true);
+  const [plannerDraft, setPlannerDraft] = useState<FlowSuggestion | null>(null);
   const [plannerMessages, setPlannerMessages] = useState<PlannerMessage[]>([
     {
       role: "assistant",
@@ -766,20 +769,16 @@ export function ScoutsPage({
 
       if (response.mode === "clarify") {
         setGenerationSummary("The agent needs a bit more context before drafting the canvas.");
+        setPlannerDraft(null);
         setNotice(null);
         setError(null);
         return;
       }
 
-      const nextBuilder = await getScoutBuilder();
-      setBuilder(nextBuilder);
-      setSelectedScoutId("new");
-      setForm({ ...scoutToPayload(null), ...response.payload });
+      setPlannerDraft(response);
       setGenerationSummary(response.summary || `Generated ${response.name}`);
-      setNotice(`Generated draft flow: ${response.name}`);
+      setNotice(`Draft ready: ${response.name}`);
       setError(null);
-      setInspectorNode(null);
-      setSelectedGraphBlockId(null);
     } catch (generationError) {
       setError(
         generationError instanceof Error
@@ -789,6 +788,23 @@ export function ScoutsPage({
     } finally {
       setIsGeneratingFlow(false);
     }
+  };
+
+  const applyPlannerDraft = () => {
+    if (!plannerDraft) return;
+    setSelectedScoutId("new");
+    setForm({ ...scoutToPayload(null), ...plannerDraft.payload });
+    setGenerationSummary(plannerDraft.summary || `Applied ${plannerDraft.name}`);
+    setNotice(`Applied draft flow: ${plannerDraft.name}`);
+    setError(null);
+    setInspectorNode(null);
+    setSelectedGraphBlockId(null);
+    setPlannerDraft(null);
+  };
+
+  const dismissPlannerDraft = () => {
+    setPlannerDraft(null);
+    setGenerationSummary(null);
   };
 
   const handleRunScout = (scoutId: number, scoutName: string) => {
@@ -1033,10 +1049,12 @@ export function ScoutsPage({
 
     const width = Math.max(channelX + blockWidth + 80, 1100);
     const maxNodeY = Math.max(...blocks.map((block) => block.y), baseY);
-    const height = Math.max(maxNodeY + blockHeight + 120, 520);
+  const height = Math.max(maxNodeY + blockHeight + 120, 520);
 
-    return { blocks, edges, width, height, blockWidth, blockHeight };
+  return { blocks, edges, width, height, blockWidth, blockHeight };
   })();
+
+  const showSideRail = Boolean(inspectorNode) || isPlannerOpen;
 
   return (
     <section className="page-stack workflow-studio-page">
@@ -1044,7 +1062,7 @@ export function ScoutsPage({
       {error ? <p className="feedback-banner error">{error}</p> : null}
 
       <section
-        className={`workflow-studio ${inspectorNode ? "workflow-studio-with-inspector" : "workflow-studio-board-only"}`}
+        className={`workflow-studio ${showSideRail ? "workflow-studio-with-inspector" : "workflow-studio-board-only"}`}
       >
         <section className={`panel studio-board ${selectedScoutId !== null ? "studio-board-active" : ""}`}>
           <div className={`studio-browser-bar ${selectedScoutId !== null ? "compact" : ""}`}>
@@ -1060,6 +1078,15 @@ export function ScoutsPage({
               {hasSavedFlows
                 ? `${savedFlows.length} saved ${savedFlows.length === 1 ? "flow" : "flows"}`
                 : "No flows yet"}
+            </div>
+            <div className="button-row compact studio-browser-actions">
+              <button
+                className="button button-secondary"
+                onClick={() => setIsPlannerOpen((current) => !current)}
+                type="button"
+              >
+                {isPlannerOpen ? "Hide flow agent" : "Open flow agent"}
+              </button>
             </div>
             <div className="flow-browser-tray">
               <button
@@ -1121,60 +1148,11 @@ export function ScoutsPage({
                     </button>
                   ) : null}
                 </div>
-                <div className={`flow-ai-planner ${flowGeneratorReady ? "" : "flow-ai-planner-locked"}`}>
-                  <div className="flow-ai-planner-head">
-                    <div>
-                      <p className="eyebrow">AI Flow Builder</p>
-                      <strong>Chat with the agent and let it draft the canvas with you.</strong>
-                    </div>
-                    <span className={`flow-ai-status ${flowGeneratorReady ? "ready" : "locked"}`}>
-                      {flowGeneratorReady ? "Ready" : "Setup required"}
-                    </span>
-                  </div>
-                  <div className="flow-ai-chat">
-                    {plannerMessages.map((message, index) => (
-                      <div
-                        className={`flow-ai-message ${message.role === "assistant" ? "assistant" : "user"}`}
-                        key={`${message.role}-${index}`}
-                      >
-                        <span className="flow-ai-message-role">
-                          {message.role === "assistant" ? "Agent" : "You"}
-                        </span>
-                        <p>{message.content}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <textarea
-                    className="input textarea flow-ai-textarea"
-                    disabled={!flowGeneratorReady || isGeneratingFlow}
-                    onChange={(e) => setGenerationPrompt(e.target.value)}
-                    placeholder="Example: Watch AI Substacks and two Reddit communities, pool the signals every morning, turn them into concise X and Telegram drafts, and send them through Telegram review first."
-                    rows={4}
-                    value={generationPrompt}
-                  />
-                  <div className="flow-ai-footer">
-                    <p>
-                      {flowGeneratorReady
-                        ? "The agent can ask follow-up questions first, then create draft nodes for the canvas."
-                        : flowGenerator?.missing_requirements?.[0] ?? "Configure Gemini in Settings to enable AI flow generation."}
-                    </p>
-                    <div className="button-row">
-                      {!flowGeneratorReady ? (
-                        <Link className="button button-secondary" href={flowGenerator?.settings_path ?? "settings"}>
-                          Open settings
-                        </Link>
-                      ) : null}
-                      <button
-                        className="button button-primary"
-                        disabled={!flowGeneratorReady || !generationPrompt.trim() || isGeneratingFlow}
-                        onClick={handleGenerateFlow}
-                        type="button"
-                      >
-                        {isGeneratingFlow ? "Thinking…" : "Send to agent"}
-                      </button>
-                    </div>
-                  </div>
-                  {generationSummary ? <p className="flow-ai-summary">{generationSummary}</p> : null}
+                <div className="flow-ai-inline-hint">
+                  <strong>Flow agent</strong>
+                  <p>
+                    Open the side rail to chat with the agent, review a template graph, and apply it when it looks right.
+                  </p>
                 </div>
                 <div className="studio-empty-steps">
                   <div className="studio-step-card">
@@ -1258,6 +1236,13 @@ export function ScoutsPage({
                 <div className="button-row studio-actions">
                   <button
                     className="button button-secondary"
+                    onClick={() => setIsPlannerOpen((current) => !current)}
+                    type="button"
+                  >
+                    {isPlannerOpen ? "Hide flow agent" : "Open flow agent"}
+                  </button>
+                  <button
+                    className="button button-secondary"
                     onClick={() => setSelectedScoutId("new")}
                     type="button"
                   >
@@ -1315,60 +1300,11 @@ export function ScoutsPage({
               </div>
 
               <div className="board-stage">
-                <div className={`flow-ai-planner flow-ai-planner-inline ${flowGeneratorReady ? "" : "flow-ai-planner-locked"}`}>
-                  <div className="flow-ai-planner-head">
-                    <div>
-                      <p className="eyebrow">AI Flow Builder</p>
-                      <strong>Refine this flow with the agent before it drafts the next canvas state.</strong>
-                    </div>
-                    <span className={`flow-ai-status ${flowGeneratorReady ? "ready" : "locked"}`}>
-                      {flowGeneratorReady ? "Agent ready" : "Setup required"}
-                    </span>
-                  </div>
-                  <div className="flow-ai-chat compact">
-                    {plannerMessages.map((message, index) => (
-                      <div
-                        className={`flow-ai-message ${message.role === "assistant" ? "assistant" : "user"}`}
-                        key={`inline-${message.role}-${index}`}
-                      >
-                        <span className="flow-ai-message-role">
-                          {message.role === "assistant" ? "Agent" : "You"}
-                        </span>
-                        <p>{message.content}</p>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="flow-ai-inline-row">
-                    <textarea
-                      className="input textarea flow-ai-textarea compact"
-                      disabled={!flowGeneratorReady || isGeneratingFlow}
-                      onChange={(e) => setGenerationPrompt(e.target.value)}
-                      placeholder="Reply to the agent with more detail, or describe a fresh workflow. It will ask follow-up questions when needed before drafting the next canvas."
-                      rows={3}
-                      value={generationPrompt}
-                    />
-                    <div className="flow-ai-inline-actions">
-                      {!flowGeneratorReady ? (
-                        <Link className="button button-secondary" href={flowGenerator?.settings_path ?? "settings"}>
-                          Open settings
-                        </Link>
-                      ) : null}
-                      <button
-                        className="button button-primary"
-                        disabled={!flowGeneratorReady || !generationPrompt.trim() || isGeneratingFlow}
-                        onClick={handleGenerateFlow}
-                        type="button"
-                      >
-                        {isGeneratingFlow ? "Thinking…" : "Send to agent"}
-                      </button>
-                    </div>
-                  </div>
-                  <p className="flow-ai-inline-note">
-                    {flowGeneratorReady
-                      ? "The planner runs through a Gemini-backed agent, asks clarifying questions when needed, and then drafts nodes you can review before saving."
-                      : flowGenerator?.missing_requirements?.[0] ?? "Configure Gemini in Settings to enable AI flow generation."}
+                <div className="flow-ai-inline-hint compact">
+                  <strong>Flow agent</strong>
+                  <p>
+                    Keep the canvas focused here. Use the side rail to chat with the agent, preview the template graph, then approve it into the canvas.
                   </p>
-                  {generationSummary ? <p className="flow-ai-summary">{generationSummary}</p> : null}
                 </div>
 
                 <div className="board-header">
@@ -2247,6 +2183,141 @@ export function ScoutsPage({
                   </article>
               ) : null}
             </>
+          </aside>
+        ) : isPlannerOpen ? (
+          <aside className="panel studio-inspector studio-agent-rail">
+            <div className="panel-header">
+              <div>
+                <p className="eyebrow">Flow Agent</p>
+                <h2>Draft the graph with chat</h2>
+              </div>
+              <div className="button-row compact">
+                <div className={`topbar-chip ${flowGeneratorReady ? "good" : ""}`}>
+                  {flowGeneratorReady ? "Gemini ready" : "Setup required"}
+                </div>
+                <button
+                  className="button button-secondary"
+                  onClick={() => setIsPlannerOpen(false)}
+                  type="button"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+
+            <article className={`canvas-card inspector-card flow-agent-card ${flowGeneratorReady ? "" : "flow-ai-planner-locked"}`}>
+              <div className="flow-ai-chat compact">
+                {plannerMessages.map((message, index) => (
+                  <div
+                    className={`flow-ai-message ${message.role === "assistant" ? "assistant" : "user"}`}
+                    key={`rail-${message.role}-${index}`}
+                  >
+                    <span className="flow-ai-message-role">
+                      {message.role === "assistant" ? "Agent" : "You"}
+                    </span>
+                    <p>{message.content}</p>
+                  </div>
+                ))}
+              </div>
+
+              <textarea
+                className="input textarea flow-ai-textarea compact"
+                disabled={!flowGeneratorReady || isGeneratingFlow}
+                onChange={(e) => setGenerationPrompt(e.target.value)}
+                placeholder="Describe the workflow you want, or answer the agent's follow-up questions."
+                rows={4}
+                value={generationPrompt}
+              />
+
+              <div className="flow-ai-inline-actions">
+                {!flowGeneratorReady ? (
+                  <Link className="button button-secondary" href={flowGenerator?.settings_path ?? "settings"}>
+                    Open settings
+                  </Link>
+                ) : null}
+                <button
+                  className="button button-primary"
+                  disabled={!flowGeneratorReady || !generationPrompt.trim() || isGeneratingFlow}
+                  onClick={handleGenerateFlow}
+                  type="button"
+                >
+                  {isGeneratingFlow ? "Thinking…" : "Send to agent"}
+                </button>
+              </div>
+
+              <p className="flow-ai-inline-note">
+                {flowGeneratorReady
+                  ? "The agent can ask clarifying questions first, then draft a template graph you can approve into the canvas."
+                  : flowGenerator?.missing_requirements?.[0] ?? "Configure Gemini in Settings to enable the flow agent."}
+              </p>
+
+              {generationSummary ? <p className="flow-ai-summary">{generationSummary}</p> : null}
+            </article>
+
+            <article className="canvas-card inspector-card flow-agent-preview">
+              <div className="canvas-card-head">
+                <BranchIcon className="shortcut-icon" />
+                <div>
+                  <p className="eyebrow">Template Graph</p>
+                  <h3>{plannerDraft?.name ?? "No draft yet"}</h3>
+                </div>
+              </div>
+              <p className="canvas-card-copy">
+                {plannerDraft?.assistant_message
+                  ? plannerDraft.assistant_message
+                  : "Once the agent drafts a flow, you can review it here and decide whether to apply it to the canvas."}
+              </p>
+              {plannerDraft ? (
+                <div className="flow-draft-preview">
+                  <div className="flow-draft-lane">
+                    <span className="flow-draft-label">Scouts</span>
+                    {plannerDraft.nodes.scouts.map((node) => (
+                      <div className="flow-draft-node" key={`draft-scout-${node.id}`}>
+                        <strong>{node.name}</strong>
+                        <span>{prettyLabel(node.type)}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flow-draft-lane">
+                    <span className="flow-draft-label">Agent</span>
+                    <div className="flow-draft-node">
+                      <strong>{plannerDraft.nodes.agent.name}</strong>
+                      <span>{prettyLabel(plannerDraft.nodes.agent.intent)}</span>
+                    </div>
+                  </div>
+                  <div className="flow-draft-lane">
+                    <span className="flow-draft-label">Outputs</span>
+                    {plannerDraft.nodes.channels.map((node) => (
+                      <div className="flow-draft-node" key={`draft-channel-${node.id}`}>
+                        <strong>{node.name}</strong>
+                        <span>{node.platforms.join(", ")}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {plannerDraft.nodes.verifier ? (
+                    <div className="flow-draft-lane">
+                      <span className="flow-draft-label">Verifier</span>
+                      <div className="flow-draft-node">
+                        <strong>{plannerDraft.nodes.verifier.name}</strong>
+                        <span>{plannerDraft.nodes.verifier.platforms.join(", ")}</span>
+                      </div>
+                    </div>
+                  ) : null}
+                <div className="button-row flow-draft-actions">
+                    <button className="button button-primary" onClick={applyPlannerDraft} type="button">
+                      Approve draft
+                    </button>
+                    <button className="button button-secondary" onClick={dismissPlannerDraft} type="button">
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flow-agent-empty">
+                  <p>Ask the agent for a flow, and the draft graph will appear here.</p>
+                </div>
+              )}
+            </article>
           </aside>
         ) : null}
       </section>

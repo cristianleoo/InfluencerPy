@@ -951,6 +951,149 @@ button {
   color: #dfe9ff;
 }
 
+.studio-agent-rail {
+  gap: 14px;
+  padding: 14px;
+  background:
+    linear-gradient(180deg, rgba(18, 24, 40, 0.98), rgba(11, 16, 29, 0.96)),
+    rgba(255, 255, 255, 0.02);
+  border-color: rgba(120, 157, 255, 0.16);
+  box-shadow:
+    0 24px 60px rgba(2, 6, 18, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.studio-agent-rail .panel-header {
+  position: sticky;
+  top: -18px;
+  z-index: 2;
+  margin: -18px -18px 0;
+  padding: 16px 18px 14px;
+  background: linear-gradient(180deg, rgba(15, 20, 34, 0.98), rgba(15, 20, 34, 0.82));
+  backdrop-filter: blur(18px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.flow-agent-card,
+.flow-agent-preview {
+  gap: 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(120, 157, 255, 0.12);
+  background:
+    linear-gradient(180deg, rgba(18, 24, 40, 0.96), rgba(15, 20, 34, 0.94)),
+    rgba(255, 255, 255, 0.03);
+}
+
+.flow-agent-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.flow-agent-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at top right, rgba(124, 92, 255, 0.16), transparent 36%),
+    radial-gradient(circle at bottom left, rgba(72, 199, 255, 0.12), transparent 34%);
+  pointer-events: none;
+}
+
+.flow-agent-card > * {
+  position: relative;
+  z-index: 1;
+}
+
+.flow-agent-preview .canvas-card-copy {
+  margin-bottom: 4px;
+}
+
+.flow-ai-chat.compact {
+  max-height: 260px;
+  padding: 6px 4px 2px 0;
+}
+
+.flow-ai-message {
+  backdrop-filter: blur(10px);
+}
+
+.flow-ai-message.assistant {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(120, 157, 255, 0.04));
+}
+
+.flow-ai-message.user {
+  margin-left: 20px;
+  background: linear-gradient(135deg, rgba(72, 199, 255, 0.16), rgba(152, 93, 255, 0.18));
+}
+
+.flow-ai-inline-actions {
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.flow-ai-inline-note {
+  font-size: 0.92rem;
+}
+
+.flow-draft-preview {
+  display: grid;
+  gap: 14px;
+}
+
+.flow-draft-lane {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.015)),
+    rgba(9, 13, 24, 0.72);
+}
+
+.flow-draft-label {
+  font-size: 0.73rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(218, 228, 249, 0.62);
+}
+
+.flow-draft-node {
+  display: grid;
+  gap: 4px;
+  padding: 12px 13px;
+  border-radius: 14px;
+  border: 1px solid rgba(120, 157, 255, 0.14);
+  background: linear-gradient(135deg, rgba(25, 33, 56, 0.94), rgba(17, 23, 40, 0.9));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.flow-draft-node strong {
+  font-size: 0.96rem;
+}
+
+.flow-draft-node span {
+  color: var(--muted);
+  font-size: 0.88rem;
+}
+
+.flow-draft-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.flow-agent-empty {
+  display: grid;
+  place-items: center;
+  min-height: 140px;
+  padding: 18px;
+  text-align: center;
+  border-radius: 16px;
+  border: 1px dashed rgba(120, 157, 255, 0.18);
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.02);
+}
+
 .flow-browser-tray {
   display: flex;
   gap: 10px;
