@@ -3,8 +3,12 @@
 import { useEffect, useMemo, useState, useTransition } from "react";
 
 import {
+  getSavedGeminiKey,
   getSettings,
   saveAndTestGeminiSettings,
+  saveAndTestSubstackSettings,
+  saveAndTestTelegramSettings,
+  saveAndTestXSettings,
   saveSettings,
   type SettingsSnapshot,
 } from "../lib/api";
@@ -105,6 +109,9 @@ export function SettingsPage({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [isGeminiPending, startGeminiTransition] = useTransition();
+  const [deliveryPending, setDeliveryPending] = useState<null | "telegram" | "x" | "substack">(null);
+  const [savedGeminiKey, setSavedGeminiKey] = useState<string | null>(null);
+  const [isGeminiSecretPending, setIsGeminiSecretPending] = useState(false);
   const [optionalSetup, setOptionalSetup] = useState({
     telegram: initialSettings?.credentials.telegram ?? false,
     x: initialSettings?.credentials.x ?? false,
@@ -123,11 +130,6 @@ export function SettingsPage({
 
   const modelOptions = settings?.ai.gemini_models ?? [];
   const activeModelId = form.customGeminiModel.trim() || form.geminiModel;
-  const recommendedModels = useMemo(() => {
-    const preferred = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"];
-    const inCatalog = preferred.filter((model) => modelOptions.includes(model));
-    return inCatalog.length > 0 ? inCatalog : modelOptions.slice(0, 3);
-  }, [modelOptions]);
 
   const setupProgress = useMemo(() => {
     const steps = [
@@ -159,6 +161,7 @@ export function SettingsPage({
         stability: data.credentials.stability,
         langfuse: data.credentials.langfuse,
       });
+      setSavedGeminiKey(null);
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Failed to load settings");
@@ -228,6 +231,7 @@ export function SettingsPage({
             customGeminiModel: "",
             geminiModel: data.ai.gemini_model,
           }));
+          setSavedGeminiKey(null);
         })
         .catch((saveError) => {
           setError(saveError instanceof Error ? saveError.message : "Failed to save settings");
@@ -260,6 +264,97 @@ export function SettingsPage({
           setError(saveError instanceof Error ? saveError.message : "Failed to connect Gemini");
         });
     });
+  };
+
+  const saveAndTestTelegram = () => {
+    setDeliveryPending("telegram");
+    saveAndTestTelegramSettings({
+      telegram_bot_token: form.telegramBotToken.trim(),
+      telegram_chat_id: form.telegramChatId.trim(),
+    })
+      .then(({ message: successMessage, settings: nextSettings }) => {
+        setSettings(nextSettings);
+        setMessage(successMessage);
+        setError(null);
+        setForm((current) => ({
+          ...current,
+          telegramBotToken: "",
+          telegramChatId: nextSettings.values.telegram_chat_id ?? "",
+        }));
+        setSavedGeminiKey(null);
+      })
+      .catch((saveError) => {
+        setError(saveError instanceof Error ? saveError.message : "Failed to validate Telegram");
+      })
+      .finally(() => setDeliveryPending(null));
+  };
+
+  const toggleSavedGeminiKey = () => {
+    if (savedGeminiKey !== null) {
+      setSavedGeminiKey(null);
+      return;
+    }
+
+    setIsGeminiSecretPending(true);
+    getSavedGeminiKey()
+      .then(({ value }) => {
+        setSavedGeminiKey(value || "");
+        setError(null);
+      })
+      .catch((loadError) => {
+        setError(loadError instanceof Error ? loadError.message : "Failed to load saved Gemini key");
+      })
+      .finally(() => setIsGeminiSecretPending(false));
+  };
+
+  const saveAndTestX = () => {
+    setDeliveryPending("x");
+    saveAndTestXSettings({
+      x_api_key: form.xApiKey.trim(),
+      x_api_secret: form.xApiSecret.trim(),
+      x_access_token: form.xAccessToken.trim(),
+      x_access_token_secret: form.xAccessTokenSecret.trim(),
+    })
+      .then(({ message: successMessage, settings: nextSettings }) => {
+        setSettings(nextSettings);
+        setMessage(successMessage);
+        setError(null);
+        setForm((current) => ({
+          ...current,
+          xApiKey: "",
+          xApiSecret: "",
+          xAccessToken: "",
+          xAccessTokenSecret: "",
+        }));
+      })
+      .catch((saveError) => {
+        setError(saveError instanceof Error ? saveError.message : "Failed to validate X");
+      })
+      .finally(() => setDeliveryPending(null));
+  };
+
+  const saveAndTestSubstack = () => {
+    setDeliveryPending("substack");
+    saveAndTestSubstackSettings({
+      substack_subdomain: form.substackSubdomain.trim(),
+      substack_sid: form.substackSid.trim(),
+      substack_lli: form.substackLli.trim(),
+    })
+      .then(({ message: successMessage, settings: nextSettings }) => {
+        setSettings(nextSettings);
+        setMessage(successMessage);
+        setError(null);
+        setForm((current) => ({
+          ...current,
+          substackSubdomain: nextSettings.values.substack_subdomain ?? "",
+          substackSid: "",
+          substackLli: "",
+        }));
+      })
+      .catch((saveError) => {
+        setError(saveError instanceof Error ? saveError.message : "Failed to validate Substack");
+      })
+      .finally(() => setDeliveryPending(null));
   };
 
   return (
@@ -394,6 +489,22 @@ export function SettingsPage({
                       value={form.geminiApiKey}
                     />
                   </label>
+                  {settings?.credentials.gemini ? (
+                    <div className="settings-secret-row">
+                      <div className="settings-secret-display">
+                        <span>Saved key</span>
+                        <strong>{savedGeminiKey ?? "****"}</strong>
+                      </div>
+                      <button
+                        className="button button-secondary"
+                        disabled={isGeminiSecretPending}
+                        onClick={toggleSavedGeminiKey}
+                        type="button"
+                      >
+                        {isGeminiSecretPending ? "Loading..." : savedGeminiKey !== null ? "Hide key" : "Show key"}
+                      </button>
+                    </div>
+                  ) : null}
                   <div className="button-row">
                     <button
                       className="button button-primary"
@@ -426,18 +537,6 @@ export function SettingsPage({
                   <p className="settings-section-copy">
                     Pick from the live Gemini model IDs, or paste a specific model ID if you want to pin one manually.
                   </p>
-                  <div className="settings-model-pills">
-                    {recommendedModels.map((modelId) => (
-                      <button
-                        key={modelId}
-                        className={`settings-model-pill ${activeModelId === modelId ? "active" : ""}`}
-                        onClick={() => setForm((current) => ({ ...current, geminiModel: modelId, customGeminiModel: "" }))}
-                        type="button"
-                      >
-                        {modelId}
-                      </button>
-                    ))}
-                  </div>
                   <label className="field">
                     <span>Model IDs list</span>
                     <select
@@ -511,6 +610,29 @@ export function SettingsPage({
       {activeTab === "delivery" ? (
         <section className="settings-tab-layout">
           <div className="settings-tab-main">
+            <section className="panel settings-delivery-hero">
+              <div>
+                <p className="eyebrow">Delivery</p>
+                <h2>Choose where drafts go after the agent finishes.</h2>
+                <p>
+                  Start with Telegram if you want review built into the workflow. Add X or
+                  Substack later when you are ready to publish directly.
+                </p>
+              </div>
+              <div className="settings-delivery-summary">
+                <div className="settings-delivery-summary-card">
+                  <span>Best first step</span>
+                  <strong>{settings?.credentials.telegram ? "Telegram is ready" : "Connect Telegram review"}</strong>
+                </div>
+                <div className="settings-delivery-summary-card">
+                  <span>Direct publishing</span>
+                  <strong>
+                    {settings?.credentials.x || settings?.credentials.substack ? "At least one channel is live" : "Optional later"}
+                  </strong>
+                </div>
+              </div>
+            </section>
+
             <article className="panel">
               <div className="panel-header">
                 <div>
@@ -519,7 +641,7 @@ export function SettingsPage({
                 </div>
                 <span className="status-chip neutral">Optional</span>
               </div>
-              <div className="settings-card-stack">
+              <div className="settings-delivery-grid">
                 <IntegrationCard
                   configured={Boolean(settings?.credentials.telegram)}
                   description="Recommended if you want draft review or delivery through Telegram. Set this up after Gemini is ready."
@@ -531,125 +653,235 @@ export function SettingsPage({
                     setOptionalSetup((current) => ({ ...current, telegram: enabled }))
                   }
                 >
-                  <label className="field">
-                    <span>Telegram bot token</span>
-                    <input
-                      className="input"
-                      onChange={(event) => setForm((current) => ({ ...current, telegramBotToken: event.target.value }))}
-                      placeholder={settings?.credentials.telegram ? "Leave empty to keep the saved Telegram bot token" : "Dedicated Telegram bot token"}
-                      type="password"
-                      value={form.telegramBotToken}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Telegram chat ID</span>
-                    <input
-                      className="input"
-                      onChange={(event) => setForm((current) => ({ ...current, telegramChatId: event.target.value }))}
-                      placeholder="Optional review or destination chat ID"
+                  <div className="settings-delivery-callout">
+                    <strong>Recommended path</strong>
+                    <p>Use Telegram when you want drafts to arrive in a chat for approval before anything publishes outward.</p>
+                  </div>
+                  <div className="settings-guidance-list">
+                    <div>
+                      <strong>1. Validate the bot</strong>
+                      <p>Paste the bot token and test it first. The token is only saved after validation succeeds.</p>
+                    </div>
+                    <div>
+                      <strong>2. Add the destination chat</strong>
+                      <p>Chat ID is optional at first, but include it if you want the full route checked too.</p>
+                    </div>
+                  </div>
+                  <div className="settings-inline-grid">
+                    <label className="field">
+                      <span>Telegram bot token</span>
+                      <input
+                        className="input"
+                        onChange={(event) => setForm((current) => ({ ...current, telegramBotToken: event.target.value }))}
+                        placeholder={settings?.credentials.telegram ? "Leave empty to keep the saved Telegram bot token" : "Dedicated Telegram bot token"}
+                        type="password"
+                        value={form.telegramBotToken}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Telegram chat ID</span>
+                      <input
+                        className="input"
+                        onChange={(event) => setForm((current) => ({ ...current, telegramChatId: event.target.value }))}
+                        placeholder="Optional review or destination chat ID"
                       value={form.telegramChatId}
                     />
                   </label>
-                </IntegrationCard>
-
-                <IntegrationCard
-                  configured={Boolean(settings?.credentials.x)}
-                  description="Only needed if you want to publish directly to X. You can leave this disconnected while you build flows."
-                  eyebrow="X"
-                  title="Connect X publishing"
-                  enabled={optionalSetup.x}
-                  enabledLabel="Set up X now"
-                  onToggleEnabled={(enabled) =>
-                    setOptionalSetup((current) => ({ ...current, x: enabled }))
-                  }
-                >
-                  <label className="field">
-                    <span>X API key</span>
-                    <input
-                      className="input"
-                      onChange={(event) => setForm((current) => ({ ...current, xApiKey: event.target.value }))}
-                      placeholder={settings?.credentials.x ? "Leave empty to keep the saved X API key" : "X API key"}
-                      type="password"
-                      value={form.xApiKey}
-                    />
-                  </label>
-                  <div className="settings-inline-grid">
-                    <label className="field">
-                      <span>X API secret</span>
-                      <input
-                        className="input"
-                        onChange={(event) => setForm((current) => ({ ...current, xApiSecret: event.target.value }))}
-                        type="password"
-                        value={form.xApiSecret}
-                      />
-                    </label>
-                    <label className="field">
-                      <span>X access token</span>
-                      <input
-                        className="input"
-                        onChange={(event) => setForm((current) => ({ ...current, xAccessToken: event.target.value }))}
-                        type="password"
-                        value={form.xAccessToken}
-                      />
-                    </label>
                   </div>
-                  <label className="field">
-                    <span>X access token secret</span>
-                    <input
-                      className="input"
-                      onChange={(event) => setForm((current) => ({ ...current, xAccessTokenSecret: event.target.value }))}
-                      type="password"
-                      value={form.xAccessTokenSecret}
-                    />
-                  </label>
-                </IntegrationCard>
-
-                <IntegrationCard
-                  configured={Boolean(settings?.credentials.substack)}
-                  description="Connect this only if you want to publish or draft directly to Substack."
-                  eyebrow="Substack"
-                  title="Connect Substack"
-                  enabled={optionalSetup.substack}
-                  enabledLabel="Set up Substack now"
-                  onToggleEnabled={(enabled) =>
-                    setOptionalSetup((current) => ({ ...current, substack: enabled }))
-                  }
-                >
-                  <label className="field">
-                    <span>Substack subdomain</span>
-                    <input
-                      className="input"
-                      onChange={(event) => setForm((current) => ({ ...current, substackSubdomain: event.target.value }))}
-                      placeholder="your-substack"
-                      value={form.substackSubdomain}
-                    />
-                  </label>
-                  <div className="settings-inline-grid">
-                    <label className="field">
-                      <span>Substack sid</span>
-                      <input
-                        className="input"
-                        onChange={(event) => setForm((current) => ({ ...current, substackSid: event.target.value }))}
-                        placeholder={settings?.credentials.substack ? "Leave empty to keep the saved sid" : "Substack sid"}
-                        type="password"
-                        value={form.substackSid}
-                      />
-                    </label>
-                    <label className="field">
-                      <span>Substack lli</span>
-                      <input
-                        className="input"
-                        onChange={(event) => setForm((current) => ({ ...current, substackLli: event.target.value }))}
-                        placeholder={settings?.credentials.substack ? "Leave empty to keep the saved lli" : "Substack lli"}
-                        type="password"
-                        value={form.substackLli}
-                      />
-                    </label>
+                  <div className="button-row">
+                    <button
+                      className="button button-primary"
+                      disabled={isPending || isGeminiPending || deliveryPending !== null}
+                      onClick={saveAndTestTelegram}
+                      type="button"
+                    >
+                      {deliveryPending === "telegram" ? "Testing Telegram..." : "Save and test Telegram"}
+                    </button>
                   </div>
                 </IntegrationCard>
+
+                <div className="settings-delivery-secondary">
+                  <IntegrationCard
+                    configured={Boolean(settings?.credentials.x)}
+                    description="Only needed if you want to publish directly to X. You can leave this disconnected while you build flows."
+                    eyebrow="X"
+                    title="Connect X publishing"
+                    enabled={optionalSetup.x}
+                    enabledLabel="Set up X now"
+                    onToggleEnabled={(enabled) =>
+                      setOptionalSetup((current) => ({ ...current, x: enabled }))
+                    }
+                  >
+                    <div className="settings-guidance-list compact">
+                      <div>
+                        <strong>Publish only when ready</strong>
+                        <p>This checks the connected X account before InfluencerPy is allowed to post there.</p>
+                      </div>
+                    </div>
+                    <label className="field">
+                      <span>X API key</span>
+                      <input
+                        className="input"
+                        onChange={(event) => setForm((current) => ({ ...current, xApiKey: event.target.value }))}
+                        placeholder={settings?.credentials.x ? "Leave empty to keep the saved X API key" : "X API key"}
+                        type="password"
+                        value={form.xApiKey}
+                      />
+                    </label>
+                    <div className="settings-inline-grid">
+                      <label className="field">
+                        <span>X API secret</span>
+                        <input
+                          className="input"
+                          onChange={(event) => setForm((current) => ({ ...current, xApiSecret: event.target.value }))}
+                          type="password"
+                          value={form.xApiSecret}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>X access token</span>
+                        <input
+                          className="input"
+                          onChange={(event) => setForm((current) => ({ ...current, xAccessToken: event.target.value }))}
+                          type="password"
+                          value={form.xAccessToken}
+                        />
+                      </label>
+                    </div>
+                    <label className="field">
+                      <span>X access token secret</span>
+                      <input
+                        className="input"
+                        onChange={(event) => setForm((current) => ({ ...current, xAccessTokenSecret: event.target.value }))}
+                        type="password"
+                        value={form.xAccessTokenSecret}
+                      />
+                    </label>
+                    <div className="button-row">
+                      <button
+                        className="button button-secondary"
+                        disabled={isPending || isGeminiPending || deliveryPending !== null}
+                        onClick={saveAndTestX}
+                        type="button"
+                      >
+                        {deliveryPending === "x" ? "Testing X..." : "Save and test X"}
+                      </button>
+                    </div>
+                  </IntegrationCard>
+
+                  <IntegrationCard
+                    configured={Boolean(settings?.credentials.substack)}
+                    description="Connect this only if you want to publish or draft directly to Substack."
+                    eyebrow="Substack"
+                    title="Connect Substack"
+                    enabled={optionalSetup.substack}
+                    enabledLabel="Set up Substack now"
+                    onToggleEnabled={(enabled) =>
+                      setOptionalSetup((current) => ({ ...current, substack: enabled }))
+                    }
+                  >
+                    <div className="settings-guidance-list compact">
+                      <div>
+                        <strong>Validate the draft route</strong>
+                        <p>We verify the publication and auth cookies first so you know draft creation can work.</p>
+                      </div>
+                    </div>
+                    <label className="field">
+                      <span>Substack subdomain</span>
+                      <input
+                        className="input"
+                        onChange={(event) => setForm((current) => ({ ...current, substackSubdomain: event.target.value }))}
+                        placeholder="your-substack"
+                        value={form.substackSubdomain}
+                      />
+                    </label>
+                    <div className="settings-inline-grid">
+                      <label className="field">
+                        <span>Substack sid</span>
+                        <input
+                          className="input"
+                          onChange={(event) => setForm((current) => ({ ...current, substackSid: event.target.value }))}
+                          placeholder={settings?.credentials.substack ? "Leave empty to keep the saved sid" : "Substack sid"}
+                          type="password"
+                          value={form.substackSid}
+                        />
+                      </label>
+                      <label className="field">
+                        <span>Substack lli</span>
+                        <input
+                          className="input"
+                          onChange={(event) => setForm((current) => ({ ...current, substackLli: event.target.value }))}
+                          placeholder={settings?.credentials.substack ? "Leave empty to keep the saved lli" : "Substack lli"}
+                          type="password"
+                          value={form.substackLli}
+                        />
+                      </label>
+                    </div>
+                    <div className="button-row">
+                      <button
+                        className="button button-secondary"
+                        disabled={isPending || isGeminiPending || deliveryPending !== null}
+                        onClick={saveAndTestSubstack}
+                        type="button"
+                      >
+                        {deliveryPending === "substack" ? "Testing Substack..." : "Save and test Substack"}
+                      </button>
+                    </div>
+                  </IntegrationCard>
+                </div>
               </div>
             </article>
           </div>
+
+          <aside className="settings-tab-side">
+            <article className="panel settings-side-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Recommended order</p>
+                  <h2>How to approach delivery</h2>
+                </div>
+              </div>
+              <div className="settings-checklist">
+                <div>
+                  <ReviewIcon className="settings-check-icon" />
+                  <div>
+                    <strong>1. Start with Telegram review</strong>
+                    <p>It is the easiest way to validate drafts before turning on direct publishing.</p>
+                  </div>
+                </div>
+                <div>
+                  <ComposeIcon className="settings-check-icon" />
+                  <div>
+                    <strong>2. Add direct channels later</strong>
+                    <p>X and Substack make sense after your prompts and flows are already behaving well.</p>
+                  </div>
+                </div>
+              </div>
+            </article>
+
+            <article className="panel settings-side-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Live status</p>
+                  <h2>Current delivery setup</h2>
+                </div>
+              </div>
+              <div className="status-cluster settings-status-cluster">
+                <div className={`status-tile ${settings?.credentials.telegram ? "good" : "neutral"}`}>
+                  <span>Telegram</span>
+                  <strong>{settings?.credentials.telegram ? "Ready" : "Not set"}</strong>
+                </div>
+                <div className={`status-tile ${settings?.credentials.x ? "good" : "neutral"}`}>
+                  <span>X</span>
+                  <strong>{settings?.credentials.x ? "Ready" : "Not set"}</strong>
+                </div>
+                <div className={`status-tile ${settings?.credentials.substack ? "good" : "neutral"}`}>
+                  <span>Substack</span>
+                  <strong>{settings?.credentials.substack ? "Ready" : "Not set"}</strong>
+                </div>
+              </div>
+            </article>
+          </aside>
         </section>
       ) : null}
 

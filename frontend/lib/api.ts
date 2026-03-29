@@ -293,6 +293,15 @@ export type GeminiSettingsTestResult = {
   settings: SettingsSnapshot;
 };
 
+export type SettingsValidationResult = {
+  message: string;
+  settings: SettingsSnapshot;
+};
+
+export type SavedSecretResult = {
+  value: string;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
@@ -413,6 +422,37 @@ export function saveAndTestGeminiSettings(
   payload: Record<string, unknown>,
 ): Promise<GeminiSettingsTestResult> {
   return request<GeminiSettingsTestResult>("/settings/gemini/test", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getSavedGeminiKey(): Promise<SavedSecretResult> {
+  return request<SavedSecretResult>("/settings/gemini/secret");
+}
+
+export function saveAndTestTelegramSettings(
+  payload: Record<string, unknown>,
+): Promise<SettingsValidationResult> {
+  return request<SettingsValidationResult>("/settings/telegram/test", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function saveAndTestXSettings(
+  payload: Record<string, unknown>,
+): Promise<SettingsValidationResult> {
+  return request<SettingsValidationResult>("/settings/x/test", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function saveAndTestSubstackSettings(
+  payload: Record<string, unknown>,
+): Promise<SettingsValidationResult> {
+  return request<SettingsValidationResult>("/settings/substack/test", {
     method: "POST",
     body: JSON.stringify(payload),
   });

@@ -12,6 +12,7 @@ from influencerpy.web.services import (
     generate_flow_suggestion,
     get_dashboard_snapshot,
     get_logs,
+    get_saved_gemini_key,
     get_scout_builder_snapshot,
     get_settings_snapshot,
     preview_scout_node,
@@ -20,6 +21,9 @@ from influencerpy.web.services import (
     refresh_rss_feed,
     reject_post,
     run_scout_workflow,
+    save_and_test_substack_settings,
+    save_and_test_telegram_settings,
+    save_and_test_x_settings,
     search_posts,
     update_scout_node,
     update_scout_record,
@@ -213,6 +217,38 @@ def save_settings(payload: dict) -> dict:
 def save_and_test_gemini(payload: dict) -> dict:
     try:
         return save_and_test_gemini_settings(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/settings/gemini/secret")
+def gemini_secret() -> dict:
+    try:
+        return get_saved_gemini_key()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/settings/telegram/test")
+def save_and_test_telegram(payload: dict) -> dict:
+    try:
+        return save_and_test_telegram_settings(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/settings/x/test")
+def save_and_test_x(payload: dict) -> dict:
+    try:
+        return save_and_test_x_settings(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/settings/substack/test")
+def save_and_test_substack(payload: dict) -> dict:
+    try:
+        return save_and_test_substack_settings(payload)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 

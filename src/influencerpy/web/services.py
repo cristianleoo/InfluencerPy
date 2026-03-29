@@ -8,11 +8,13 @@ from typing import Any
 from dotenv import dotenv_values, load_dotenv, set_key
 import requests
 from sqlmodel import func, select
+import tweepy
 
 from influencerpy.config import CONFIG_FILE, ENV_FILE, ConfigManager
 from influencerpy.core.scouts import ScoutManager
 from influencerpy.database import get_session
 from influencerpy.logger import LOGS_DIR
+from influencerpy.platforms.substack.auth import SubstackAuth
 from influencerpy.platforms.substack_platform import SubstackProvider
 from influencerpy.platforms.x_platform import XProvider
 from influencerpy.providers.gemini import GeminiProvider
@@ -236,6 +238,19 @@ def _write_env_file_atomically(values: dict[str, str]) -> None:
     finally:
         if temp_path and temp_path.exists():
             temp_path.unlink(missing_ok=True)
+
+
+def _persist_env_credentials(values: dict[str, str]) -> None:
+    if not values:
+        return
+    _write_env_file_atomically(values)
+    for key, value in values.items():
+        os.environ[key] = value
+    _safe_load_settings_env()
+
+
+def _effective_credential(payload: dict[str, Any], payload_key: str, env_key: str) -> str:
+    return str(payload.get(payload_key) or os.getenv(env_key, "") or "").strip()
 
 
 def _fetch_gemini_models_for_api_key(api_key: str) -> list[str]:
@@ -2019,6 +2034,140 @@ def save_and_test_gemini_settings(payload: dict[str, Any]) -> dict[str, Any]:
         "message": f"Gemini connected. {len(available_models)} model IDs are available.",
         "settings": snapshot,
     }
+
+
+def save_and_test_telegram_settings(payload: dict[str, Any]) -> dict[str, Any]:
+    _ensure_settings_storage_writable()
+    _safe_load_settings_env()
+
+    token = _effective_credential(payload, "telegram_bot_token", "TELEGRAM_BOT_TOKEN")
+    chat_id = _effective_credential(payload, "telegram_chat_id", "TELEGRAM_CHAT_ID")
+
+    if not token:
+        raise RuntimeError("Add a Telegram bot token before testing the connection.")
+
+    try:
+        me_response = requests.get(
+            f"https://api.telegram.org/bot{token}/getMe",
+            timeout=15,
+        )
+        me_response.raise_for_status()
+        me_payload = me_response.json()
+        if not me_payload.get("ok"):
+            raise RuntimeError(me_payload.get("description") or "Telegram bot validation failed.")
+
+        if chat_id:
+            chat_response = requests.get(
+                f"https://api.telegram.org/bot{token}/getChat",
+                params={"chat_id": chat_id},
+                timeout=15,
+            )
+            chat_response.raise_for_status()
+            chat_payload = chat_response.json()
+            if not chat_payload.get("ok"):
+                raise RuntimeError(chat_payload.get("description") or "Telegram chat validation failed.")
+    except requests.HTTPError as exc:
+        detail = exc.response.text if exc.response is not None else str(exc)
+        raise RuntimeError(f"Telegram connection failed: {detail}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Telegram connection failed: {exc}") from exc
+
+    updates = {"TELEGRAM_BOT_TOKEN": token}
+    if "telegram_chat_id" in payload or chat_id:
+        updates["TELEGRAM_CHAT_ID"] = chat_id
+    _persist_env_credentials(updates)
+
+    snapshot = get_settings_snapshot()
+    return {
+        "message": "Telegram is connected and ready." if chat_id else "Telegram bot token is valid. Add a chat ID when you are ready to route drafts there.",
+        "settings": snapshot,
+    }
+
+
+def save_and_test_x_settings(payload: dict[str, Any]) -> dict[str, Any]:
+    _ensure_settings_storage_writable()
+    _safe_load_settings_env()
+
+    api_key = _effective_credential(payload, "x_api_key", "X_API_KEY")
+    api_secret = _effective_credential(payload, "x_api_secret", "X_API_SECRET")
+    access_token = _effective_credential(payload, "x_access_token", "X_ACCESS_TOKEN")
+    access_token_secret = _effective_credential(payload, "x_access_token_secret", "X_ACCESS_TOKEN_SECRET")
+
+    if not all([api_key, api_secret, access_token, access_token_secret]):
+        raise RuntimeError("Add the full X credential set before testing the connection.")
+
+    try:
+        client = tweepy.Client(
+            consumer_key=api_key,
+            consumer_secret=api_secret,
+            access_token=access_token,
+            access_token_secret=access_token_secret,
+        )
+        response = client.get_me(user_fields=["username"])
+        if response.data is None:
+            raise RuntimeError("X credentials were accepted, but the account identity could not be fetched.")
+    except Exception as exc:
+        raise RuntimeError(f"X connection failed: {exc}") from exc
+
+    _persist_env_credentials(
+        {
+            "X_API_KEY": api_key,
+            "X_API_SECRET": api_secret,
+            "X_ACCESS_TOKEN": access_token,
+            "X_ACCESS_TOKEN_SECRET": access_token_secret,
+        }
+    )
+
+    snapshot = get_settings_snapshot()
+    username = getattr(response.data, "username", None)
+    suffix = f" Connected to @{username}." if username else " X publishing is ready."
+    return {
+        "message": f"X credentials validated.{suffix}",
+        "settings": snapshot,
+    }
+
+
+def save_and_test_substack_settings(payload: dict[str, Any]) -> dict[str, Any]:
+    _ensure_settings_storage_writable()
+    _safe_load_settings_env()
+
+    subdomain = _effective_credential(payload, "substack_subdomain", "SUBSTACK_SUBDOMAIN")
+    sid = _effective_credential(payload, "substack_sid", "SUBSTACK_SID")
+    lli = _effective_credential(payload, "substack_lli", "SUBSTACK_LLI")
+
+    if not all([subdomain, sid, lli]):
+        raise RuntimeError("Add the Substack subdomain, sid, and lli before testing the connection.")
+
+    try:
+        auth = SubstackAuth(cookies_dict={"sid": sid, "lli": lli})
+        response = auth.get(f"https://{subdomain}.substack.com/api/v1/publication", timeout=30)
+        response.raise_for_status()
+        publication = response.json()
+    except requests.HTTPError as exc:
+        detail = exc.response.text if exc.response is not None else str(exc)
+        raise RuntimeError(f"Substack connection failed: {detail}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Substack connection failed: {exc}") from exc
+
+    _persist_env_credentials(
+        {
+            "SUBSTACK_SUBDOMAIN": subdomain,
+            "SUBSTACK_SID": sid,
+            "SUBSTACK_LLI": lli,
+        }
+    )
+
+    snapshot = get_settings_snapshot()
+    publication_name = publication.get("name") or subdomain
+    return {
+        "message": f"Substack connected to {publication_name}.",
+        "settings": snapshot,
+    }
+
+
+def get_saved_gemini_key() -> dict[str, str]:
+    _safe_load_settings_env()
+    return {"value": os.getenv("GEMINI_API_KEY", "")}
 
 
 def get_logs(lines: int = 100) -> dict[str, Any]:
