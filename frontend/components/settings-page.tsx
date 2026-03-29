@@ -2,7 +2,12 @@
 
 import { useEffect, useMemo, useState, useTransition } from "react";
 
-import { getSettings, saveSettings, type SettingsSnapshot } from "../lib/api";
+import {
+  getSettings,
+  saveAndTestGeminiSettings,
+  saveSettings,
+  type SettingsSnapshot,
+} from "../lib/api";
 import {
   ComposeIcon,
   ReviewIcon,
@@ -74,6 +79,7 @@ export function SettingsPage({
 }: {
   initialSettings?: SettingsSnapshot | null;
 }) {
+  const [activeTab, setActiveTab] = useState<"core" | "delivery" | "advanced" | "workspace">("core");
   const [settings, setSettings] = useState<SettingsSnapshot | null>(initialSettings);
   const [form, setForm] = useState({
     geminiModel: initialSettings?.ai.gemini_model ?? "gemini-2.5-flash",
@@ -98,6 +104,7 @@ export function SettingsPage({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [isGeminiPending, startGeminiTransition] = useTransition();
   const [optionalSetup, setOptionalSetup] = useState({
     telegram: initialSettings?.credentials.telegram ?? false,
     x: initialSettings?.credentials.x ?? false,
@@ -228,6 +235,33 @@ export function SettingsPage({
     });
   };
 
+  const saveAndTestGemini = () => {
+    startGeminiTransition(() => {
+      saveAndTestGeminiSettings({
+        ai: {
+          gemini_model: activeModelId,
+        },
+        credentials: {
+          gemini_api_key: form.geminiApiKey.trim(),
+        },
+      })
+        .then(({ message: successMessage, settings: nextSettings }) => {
+          setSettings(nextSettings);
+          setMessage(successMessage);
+          setError(null);
+          setForm((current) => ({
+            ...current,
+            geminiApiKey: "",
+            customGeminiModel: "",
+            geminiModel: nextSettings.ai.gemini_model,
+          }));
+        })
+        .catch((saveError) => {
+          setError(saveError instanceof Error ? saveError.message : "Failed to connect Gemini");
+        });
+    });
+  };
+
   return (
     <section className="page-stack settings-page-shell">
       <section className="settings-hero panel">
@@ -296,407 +330,477 @@ export function SettingsPage({
         </div>
       ) : null}
 
-      <section className="settings-essential-grid">
-        <article className="panel settings-primary-panel">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">Step 1</p>
-              <h2>Connect Gemini</h2>
-            </div>
-            <span className={`status-chip ${settings?.credentials.gemini ? "good" : "warn"}`}>
-              {settings?.credentials.gemini ? "Ready" : "Required"}
-            </span>
-          </div>
-          <div className="settings-stack">
-            <p className="settings-section-copy">
-              This powers planning, generation, and the AI flow builder. Add the API key once, then
-              choose the default model ID below.
-            </p>
-            <label className="field">
-              <span>Gemini API key</span>
-              <input
-                className="input"
-                onChange={(event) => setForm((current) => ({ ...current, geminiApiKey: event.target.value }))}
-                placeholder={settings?.credentials.gemini ? "Leave empty to keep the saved API key" : "Paste your Gemini API key"}
-                type="password"
-                value={form.geminiApiKey}
-              />
-            </label>
-            <div className="helper-note">
-              <span>How it works</span>
-              <p>Leaving secret fields empty keeps the current saved value. Paste a new one only when you want to replace it.</p>
-            </div>
-          </div>
-        </article>
+      <section className="settings-tab-bar panel">
+        <button
+          className={`settings-tab ${activeTab === "core" ? "active" : ""}`}
+          onClick={() => setActiveTab("core")}
+          type="button"
+        >
+          <span>Core</span>
+          <strong>Gemini and models</strong>
+        </button>
+        <button
+          className={`settings-tab ${activeTab === "delivery" ? "active" : ""}`}
+          onClick={() => setActiveTab("delivery")}
+          type="button"
+        >
+          <span>Delivery</span>
+          <strong>Telegram, X, Substack</strong>
+        </button>
+        <button
+          className={`settings-tab ${activeTab === "advanced" ? "active" : ""}`}
+          onClick={() => setActiveTab("advanced")}
+          type="button"
+        >
+          <span>Advanced</span>
+          <strong>Stability, Langfuse, embeddings</strong>
+        </button>
+        <button
+          className={`settings-tab ${activeTab === "workspace" ? "active" : ""}`}
+          onClick={() => setActiveTab("workspace")}
+          type="button"
+        >
+          <span>Workspace</span>
+          <strong>Health and readiness</strong>
+        </button>
+      </section>
 
-        <article className="panel settings-primary-panel">
-          <div className="panel-header">
-            <div>
-              <p className="eyebrow">Step 2</p>
-              <h2>Choose the default model ID</h2>
-            </div>
-            <span className="status-chip neutral">Gemini catalog</span>
+      {activeTab === "core" ? (
+        <section className="settings-tab-layout">
+          <div className="settings-tab-main">
+            <section className="settings-essential-grid">
+              <article className="panel settings-primary-panel">
+                <div className="panel-header">
+                  <div>
+                    <p className="eyebrow">Step 1</p>
+                    <h2>Connect Gemini</h2>
+                  </div>
+                  <span className={`status-chip ${settings?.credentials.gemini ? "good" : "warn"}`}>
+                    {settings?.credentials.gemini ? "Ready" : "Required"}
+                  </span>
+                </div>
+                <div className="settings-stack">
+                  <p className="settings-section-copy">
+                    This powers planning, generation, and the AI flow builder. Add the API key once, then
+                    choose the default model ID below.
+                  </p>
+                  <label className="field">
+                    <span>Gemini API key</span>
+                    <input
+                      className="input"
+                      onChange={(event) => setForm((current) => ({ ...current, geminiApiKey: event.target.value }))}
+                      placeholder={settings?.credentials.gemini ? "Leave empty to keep the saved API key" : "Paste your Gemini API key"}
+                      type="password"
+                      value={form.geminiApiKey}
+                    />
+                  </label>
+                  <div className="button-row">
+                    <button
+                      className="button button-primary"
+                      disabled={isPending || isGeminiPending}
+                      onClick={saveAndTestGemini}
+                      type="button"
+                    >
+                      {isGeminiPending ? "Testing Gemini..." : "Save and test Gemini"}
+                    </button>
+                  </div>
+                  <div className="helper-note">
+                    <span>How it works</span>
+                    <p>
+                      This saves the Gemini API key only after the connection test succeeds. Leaving the
+                      field empty keeps the current saved key.
+                    </p>
+                  </div>
+                </div>
+              </article>
+
+              <article className="panel settings-primary-panel">
+                <div className="panel-header">
+                  <div>
+                    <p className="eyebrow">Step 2</p>
+                    <h2>Choose the default model ID</h2>
+                  </div>
+                  <span className="status-chip neutral">Gemini catalog</span>
+                </div>
+                <div className="settings-stack">
+                  <p className="settings-section-copy">
+                    Pick from the live Gemini model IDs, or paste a specific model ID if you want to pin one manually.
+                  </p>
+                  <div className="settings-model-pills">
+                    {recommendedModels.map((modelId) => (
+                      <button
+                        key={modelId}
+                        className={`settings-model-pill ${activeModelId === modelId ? "active" : ""}`}
+                        onClick={() => setForm((current) => ({ ...current, geminiModel: modelId, customGeminiModel: "" }))}
+                        type="button"
+                      >
+                        {modelId}
+                      </button>
+                    ))}
+                  </div>
+                  <label className="field">
+                    <span>Model IDs list</span>
+                    <select
+                      className="input"
+                      onChange={(event) => setForm((current) => ({ ...current, geminiModel: event.target.value, customGeminiModel: "" }))}
+                      value={form.customGeminiModel ? "" : form.geminiModel}
+                    >
+                      {modelOptions.map((modelId) => (
+                        <option key={modelId} value={modelId}>
+                          {modelId}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    <span>Or paste a custom model ID</span>
+                    <input
+                      className="input"
+                      list="gemini-model-ids"
+                      onChange={(event) => setForm((current) => ({ ...current, customGeminiModel: event.target.value }))}
+                      placeholder="Optional custom Gemini model ID"
+                      value={form.customGeminiModel}
+                    />
+                    <datalist id="gemini-model-ids">
+                      {modelOptions.map((modelId) => (
+                        <option key={modelId} value={modelId} />
+                      ))}
+                    </datalist>
+                  </label>
+                </div>
+              </article>
+            </section>
           </div>
-          <div className="settings-stack">
-            <p className="settings-section-copy">
-              Pick from the live Gemini model IDs, or paste a specific model ID if you want to pin one manually.
-            </p>
-            <div className="settings-model-pills">
-              {recommendedModels.map((modelId) => (
-                <button
-                  key={modelId}
-                  className={`settings-model-pill ${activeModelId === modelId ? "active" : ""}`}
-                  onClick={() => setForm((current) => ({ ...current, geminiModel: modelId, customGeminiModel: "" }))}
-                  type="button"
+
+          <aside className="settings-tab-side">
+            <article className="panel settings-side-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">What to do first</p>
+                  <h2>Simple setup path</h2>
+                </div>
+              </div>
+              <div className="settings-checklist">
+                <div>
+                  <SparkIcon className="settings-check-icon" />
+                  <div>
+                    <strong>1. Add Gemini</strong>
+                    <p>This is the only required provider for the current UI.</p>
+                  </div>
+                </div>
+                <div>
+                  <ComposeIcon className="settings-check-icon" />
+                  <div>
+                    <strong>2. Pick the model ID</strong>
+                    <p>Use the live model list or pin a custom Gemini model ID.</p>
+                  </div>
+                </div>
+                <div>
+                  <ReviewIcon className="settings-check-icon" />
+                  <div>
+                    <strong>3. Add delivery later</strong>
+                    <p>Telegram, Substack, X, Stability, and Langfuse are optional.</p>
+                  </div>
+                </div>
+              </div>
+            </article>
+          </aside>
+        </section>
+      ) : null}
+
+      {activeTab === "delivery" ? (
+        <section className="settings-tab-layout">
+          <div className="settings-tab-main">
+            <article className="panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Delivery</p>
+                  <h2>Review and publishing channels</h2>
+                </div>
+                <span className="status-chip neutral">Optional</span>
+              </div>
+              <div className="settings-card-stack">
+                <IntegrationCard
+                  configured={Boolean(settings?.credentials.telegram)}
+                  description="Recommended if you want draft review or delivery through Telegram. Set this up after Gemini is ready."
+                  eyebrow="Telegram"
+                  title="Connect Telegram"
+                  enabled={optionalSetup.telegram}
+                  enabledLabel="Set up Telegram now"
+                  onToggleEnabled={(enabled) =>
+                    setOptionalSetup((current) => ({ ...current, telegram: enabled }))
+                  }
                 >
-                  {modelId}
-                </button>
-              ))}
-            </div>
-            <label className="field">
-              <span>Model IDs list</span>
-              <select
-                className="input"
-                onChange={(event) => setForm((current) => ({ ...current, geminiModel: event.target.value, customGeminiModel: "" }))}
-                value={form.customGeminiModel ? "" : form.geminiModel}
-              >
-                {modelOptions.map((modelId) => (
-                  <option key={modelId} value={modelId}>
-                    {modelId}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>Or paste a custom model ID</span>
-              <input
-                className="input"
-                list="gemini-model-ids"
-                onChange={(event) => setForm((current) => ({ ...current, customGeminiModel: event.target.value }))}
-                placeholder="Optional custom Gemini model ID"
-                value={form.customGeminiModel}
-              />
-              <datalist id="gemini-model-ids">
-                {modelOptions.map((modelId) => (
-                  <option key={modelId} value={modelId} />
-                ))}
-              </datalist>
-            </label>
+                  <label className="field">
+                    <span>Telegram bot token</span>
+                    <input
+                      className="input"
+                      onChange={(event) => setForm((current) => ({ ...current, telegramBotToken: event.target.value }))}
+                      placeholder={settings?.credentials.telegram ? "Leave empty to keep the saved Telegram bot token" : "Dedicated Telegram bot token"}
+                      type="password"
+                      value={form.telegramBotToken}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Telegram chat ID</span>
+                    <input
+                      className="input"
+                      onChange={(event) => setForm((current) => ({ ...current, telegramChatId: event.target.value }))}
+                      placeholder="Optional review or destination chat ID"
+                      value={form.telegramChatId}
+                    />
+                  </label>
+                </IntegrationCard>
+
+                <IntegrationCard
+                  configured={Boolean(settings?.credentials.x)}
+                  description="Only needed if you want to publish directly to X. You can leave this disconnected while you build flows."
+                  eyebrow="X"
+                  title="Connect X publishing"
+                  enabled={optionalSetup.x}
+                  enabledLabel="Set up X now"
+                  onToggleEnabled={(enabled) =>
+                    setOptionalSetup((current) => ({ ...current, x: enabled }))
+                  }
+                >
+                  <label className="field">
+                    <span>X API key</span>
+                    <input
+                      className="input"
+                      onChange={(event) => setForm((current) => ({ ...current, xApiKey: event.target.value }))}
+                      placeholder={settings?.credentials.x ? "Leave empty to keep the saved X API key" : "X API key"}
+                      type="password"
+                      value={form.xApiKey}
+                    />
+                  </label>
+                  <div className="settings-inline-grid">
+                    <label className="field">
+                      <span>X API secret</span>
+                      <input
+                        className="input"
+                        onChange={(event) => setForm((current) => ({ ...current, xApiSecret: event.target.value }))}
+                        type="password"
+                        value={form.xApiSecret}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>X access token</span>
+                      <input
+                        className="input"
+                        onChange={(event) => setForm((current) => ({ ...current, xAccessToken: event.target.value }))}
+                        type="password"
+                        value={form.xAccessToken}
+                      />
+                    </label>
+                  </div>
+                  <label className="field">
+                    <span>X access token secret</span>
+                    <input
+                      className="input"
+                      onChange={(event) => setForm((current) => ({ ...current, xAccessTokenSecret: event.target.value }))}
+                      type="password"
+                      value={form.xAccessTokenSecret}
+                    />
+                  </label>
+                </IntegrationCard>
+
+                <IntegrationCard
+                  configured={Boolean(settings?.credentials.substack)}
+                  description="Connect this only if you want to publish or draft directly to Substack."
+                  eyebrow="Substack"
+                  title="Connect Substack"
+                  enabled={optionalSetup.substack}
+                  enabledLabel="Set up Substack now"
+                  onToggleEnabled={(enabled) =>
+                    setOptionalSetup((current) => ({ ...current, substack: enabled }))
+                  }
+                >
+                  <label className="field">
+                    <span>Substack subdomain</span>
+                    <input
+                      className="input"
+                      onChange={(event) => setForm((current) => ({ ...current, substackSubdomain: event.target.value }))}
+                      placeholder="your-substack"
+                      value={form.substackSubdomain}
+                    />
+                  </label>
+                  <div className="settings-inline-grid">
+                    <label className="field">
+                      <span>Substack sid</span>
+                      <input
+                        className="input"
+                        onChange={(event) => setForm((current) => ({ ...current, substackSid: event.target.value }))}
+                        placeholder={settings?.credentials.substack ? "Leave empty to keep the saved sid" : "Substack sid"}
+                        type="password"
+                        value={form.substackSid}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Substack lli</span>
+                      <input
+                        className="input"
+                        onChange={(event) => setForm((current) => ({ ...current, substackLli: event.target.value }))}
+                        placeholder={settings?.credentials.substack ? "Leave empty to keep the saved lli" : "Substack lli"}
+                        type="password"
+                        value={form.substackLli}
+                      />
+                    </label>
+                  </div>
+                </IntegrationCard>
+              </div>
+            </article>
           </div>
-        </article>
-      </section>
+        </section>
+      ) : null}
 
-      <section className="settings-layout-grid">
-        <div className="settings-main-column">
-          <article className="panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Step 3</p>
-                <h2>Delivery and review</h2>
-              </div>
-              <span className="status-chip neutral">Optional</span>
-            </div>
-            <div className="settings-card-stack">
-              <IntegrationCard
-                configured={Boolean(settings?.credentials.telegram)}
-                description="Recommended if you want draft review or delivery through Telegram. Set this up after Gemini is ready."
-                eyebrow="Telegram"
-                title="Connect Telegram"
-                enabled={optionalSetup.telegram}
-                enabledLabel="Set up Telegram now"
-                onToggleEnabled={(enabled) =>
-                  setOptionalSetup((current) => ({ ...current, telegram: enabled }))
-                }
-              >
-                <label className="field">
-                  <span>Telegram bot token</span>
-                  <input
-                    className="input"
-                    onChange={(event) => setForm((current) => ({ ...current, telegramBotToken: event.target.value }))}
-                    placeholder={settings?.credentials.telegram ? "Leave empty to keep the saved Telegram bot token" : "Dedicated Telegram bot token"}
-                    type="password"
-                    value={form.telegramBotToken}
-                  />
-                </label>
-                <label className="field">
-                  <span>Telegram chat ID</span>
-                  <input
-                    className="input"
-                    onChange={(event) => setForm((current) => ({ ...current, telegramChatId: event.target.value }))}
-                    placeholder="Optional review or destination chat ID"
-                    value={form.telegramChatId}
-                  />
-                </label>
-              </IntegrationCard>
-
-              <IntegrationCard
-                configured={Boolean(settings?.credentials.x)}
-                description="Only needed if you want to publish directly to X. You can leave this disconnected while you build flows."
-                eyebrow="X"
-                title="Connect X publishing"
-                enabled={optionalSetup.x}
-                enabledLabel="Set up X now"
-                onToggleEnabled={(enabled) =>
-                  setOptionalSetup((current) => ({ ...current, x: enabled }))
-                }
-              >
-                <label className="field">
-                  <span>X API key</span>
-                  <input
-                    className="input"
-                    onChange={(event) => setForm((current) => ({ ...current, xApiKey: event.target.value }))}
-                    placeholder={settings?.credentials.x ? "Leave empty to keep the saved X API key" : "X API key"}
-                    type="password"
-                    value={form.xApiKey}
-                  />
-                </label>
-                <div className="settings-inline-grid">
-                  <label className="field">
-                    <span>X API secret</span>
-                    <input
-                      className="input"
-                      onChange={(event) => setForm((current) => ({ ...current, xApiSecret: event.target.value }))}
-                      type="password"
-                      value={form.xApiSecret}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>X access token</span>
-                    <input
-                      className="input"
-                      onChange={(event) => setForm((current) => ({ ...current, xAccessToken: event.target.value }))}
-                      type="password"
-                      value={form.xAccessToken}
-                    />
-                  </label>
-                </div>
-                <label className="field">
-                  <span>X access token secret</span>
-                  <input
-                    className="input"
-                    onChange={(event) => setForm((current) => ({ ...current, xAccessTokenSecret: event.target.value }))}
-                    type="password"
-                    value={form.xAccessTokenSecret}
-                  />
-                </label>
-              </IntegrationCard>
-
-              <IntegrationCard
-                configured={Boolean(settings?.credentials.substack)}
-                description="Connect this only if you want to publish or draft directly to Substack."
-                eyebrow="Substack"
-                title="Connect Substack"
-                enabled={optionalSetup.substack}
-                enabledLabel="Set up Substack now"
-                onToggleEnabled={(enabled) =>
-                  setOptionalSetup((current) => ({ ...current, substack: enabled }))
-                }
-              >
-                <label className="field">
-                  <span>Substack subdomain</span>
-                  <input
-                    className="input"
-                    onChange={(event) => setForm((current) => ({ ...current, substackSubdomain: event.target.value }))}
-                    placeholder="your-substack"
-                    value={form.substackSubdomain}
-                  />
-                </label>
-                <div className="settings-inline-grid">
-                  <label className="field">
-                    <span>Substack sid</span>
-                    <input
-                      className="input"
-                      onChange={(event) => setForm((current) => ({ ...current, substackSid: event.target.value }))}
-                      placeholder={settings?.credentials.substack ? "Leave empty to keep the saved sid" : "Substack sid"}
-                      type="password"
-                      value={form.substackSid}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Substack lli</span>
-                    <input
-                      className="input"
-                      onChange={(event) => setForm((current) => ({ ...current, substackLli: event.target.value }))}
-                      placeholder={settings?.credentials.substack ? "Leave empty to keep the saved lli" : "Substack lli"}
-                      type="password"
-                      value={form.substackLli}
-                    />
-                  </label>
-                </div>
-              </IntegrationCard>
-            </div>
-          </article>
-
-          <article className="panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Advanced</p>
-                <h2>Optional supporting services</h2>
-              </div>
-              <span className="status-chip neutral">Optional</span>
-            </div>
-            <div className="settings-card-stack">
-              <IntegrationCard
-                configured={Boolean(settings?.credentials.stability)}
-                description="Only needed if you want image generation in flows or generated posts."
-                eyebrow="Stability"
-                title="Connect Stability AI"
-                enabled={optionalSetup.stability}
-                enabledLabel="Set up Stability AI now"
-                onToggleEnabled={(enabled) =>
-                  setOptionalSetup((current) => ({ ...current, stability: enabled }))
-                }
-              >
-                <label className="field">
-                  <span>Stability API key</span>
-                  <input
-                    className="input"
-                    onChange={(event) => setForm((current) => ({ ...current, stabilityApiKey: event.target.value }))}
-                    placeholder={settings?.credentials.stability ? "Leave empty to keep the saved Stability API key" : "Stability API key"}
-                    type="password"
-                    value={form.stabilityApiKey}
-                  />
-                </label>
-              </IntegrationCard>
-
-              <IntegrationCard
-                configured={Boolean(settings?.credentials.langfuse)}
-                description="Use Langfuse only if you want traces and telemetry for runs."
-                eyebrow="Langfuse"
-                title="Connect Langfuse"
-                enabled={optionalSetup.langfuse}
-                enabledLabel="Set up Langfuse now"
-                onToggleEnabled={(enabled) =>
-                  setOptionalSetup((current) => ({ ...current, langfuse: enabled }))
-                }
-              >
-                <label className="field">
-                  <span>Langfuse host</span>
-                  <input
-                    className="input"
-                    onChange={(event) => setForm((current) => ({ ...current, langfuseHost: event.target.value }))}
-                    placeholder="https://cloud.langfuse.com"
-                    value={form.langfuseHost}
-                  />
-                </label>
-                <div className="settings-inline-grid">
-                  <label className="field">
-                    <span>Langfuse public key</span>
-                    <input
-                      className="input"
-                      onChange={(event) => setForm((current) => ({ ...current, langfusePublicKey: event.target.value }))}
-                      placeholder={settings?.credentials.langfuse ? "Leave empty to keep the saved public key" : "Langfuse public key"}
-                      type="password"
-                      value={form.langfusePublicKey}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Langfuse secret key</span>
-                    <input
-                      className="input"
-                      onChange={(event) => setForm((current) => ({ ...current, langfuseSecretKey: event.target.value }))}
-                      placeholder={settings?.credentials.langfuse ? "Leave empty to keep the saved secret key" : "Langfuse secret key"}
-                      type="password"
-                      value={form.langfuseSecretKey}
-                    />
-                  </label>
-                </div>
-              </IntegrationCard>
-            </div>
-          </article>
-        </div>
-
-        <aside className="settings-side-column">
-          <article className="panel settings-side-panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">What to do first</p>
-                <h2>Simple setup path</h2>
-              </div>
-            </div>
-            <div className="settings-checklist">
-              <div>
-                <SparkIcon className="settings-check-icon" />
+      {activeTab === "advanced" ? (
+        <section className="settings-tab-layout">
+          <div className="settings-tab-main">
+            <article className="panel">
+              <div className="panel-header">
                 <div>
-                  <strong>1. Add Gemini</strong>
-                  <p>This is the only required provider for the current UI.</p>
+                  <p className="eyebrow">Advanced</p>
+                  <h2>Optional supporting services</h2>
                 </div>
+                <span className="status-chip neutral">Optional</span>
               </div>
-              <div>
-                <ComposeIcon className="settings-check-icon" />
-                <div>
-                  <strong>2. Pick the model ID</strong>
-                  <p>Use the live model list or pin a custom Gemini model ID.</p>
-                </div>
-              </div>
-              <div>
-                <ReviewIcon className="settings-check-icon" />
-                <div>
-                  <strong>3. Add delivery later</strong>
-                  <p>Telegram, Substack, X, Stability, and Langfuse are optional.</p>
-                </div>
-              </div>
-            </div>
-          </article>
+              <div className="settings-card-stack">
+                <IntegrationCard
+                  configured={Boolean(settings?.credentials.stability)}
+                  description="Only needed if you want image generation in flows or generated posts."
+                  eyebrow="Stability"
+                  title="Connect Stability AI"
+                  enabled={optionalSetup.stability}
+                  enabledLabel="Set up Stability AI now"
+                  onToggleEnabled={(enabled) =>
+                    setOptionalSetup((current) => ({ ...current, stability: enabled }))
+                  }
+                >
+                  <label className="field">
+                    <span>Stability API key</span>
+                    <input
+                      className="input"
+                      onChange={(event) => setForm((current) => ({ ...current, stabilityApiKey: event.target.value }))}
+                      placeholder={settings?.credentials.stability ? "Leave empty to keep the saved Stability API key" : "Stability API key"}
+                      type="password"
+                      value={form.stabilityApiKey}
+                    />
+                  </label>
+                </IntegrationCard>
 
-          <article className="panel settings-side-panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Workspace status</p>
-                <h2>Current setup</h2>
+                <IntegrationCard
+                  configured={Boolean(settings?.credentials.langfuse)}
+                  description="Use Langfuse only if you want traces and telemetry for runs."
+                  eyebrow="Langfuse"
+                  title="Connect Langfuse"
+                  enabled={optionalSetup.langfuse}
+                  enabledLabel="Set up Langfuse now"
+                  onToggleEnabled={(enabled) =>
+                    setOptionalSetup((current) => ({ ...current, langfuse: enabled }))
+                  }
+                >
+                  <label className="field">
+                    <span>Langfuse host</span>
+                    <input
+                      className="input"
+                      onChange={(event) => setForm((current) => ({ ...current, langfuseHost: event.target.value }))}
+                      placeholder="https://cloud.langfuse.com"
+                      value={form.langfuseHost}
+                    />
+                  </label>
+                  <div className="settings-inline-grid">
+                    <label className="field">
+                      <span>Langfuse public key</span>
+                      <input
+                        className="input"
+                        onChange={(event) => setForm((current) => ({ ...current, langfusePublicKey: event.target.value }))}
+                        placeholder={settings?.credentials.langfuse ? "Leave empty to keep the saved public key" : "Langfuse public key"}
+                        type="password"
+                        value={form.langfusePublicKey}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>Langfuse secret key</span>
+                      <input
+                        className="input"
+                        onChange={(event) => setForm((current) => ({ ...current, langfuseSecretKey: event.target.value }))}
+                        placeholder={settings?.credentials.langfuse ? "Leave empty to keep the saved secret key" : "Langfuse secret key"}
+                        type="password"
+                        value={form.langfuseSecretKey}
+                      />
+                    </label>
+                  </div>
+                </IntegrationCard>
               </div>
-            </div>
-            <div className="status-cluster settings-status-cluster">
-              <div className={`status-tile ${settings?.storage.env_readable ? "good" : "warn"}`}>
-                <span>.env readability</span>
-                <strong>{settings?.storage.env_readable ? "Readable" : "Blocked"}</strong>
-              </div>
-              <div className={`status-tile ${settings?.storage.env_writable ? "good" : "warn"}`}>
-                <span>.env write access</span>
-                <strong>{settings?.storage.env_writable ? "Writable" : "Blocked"}</strong>
-              </div>
-              <div className={`status-tile ${settings?.storage.config_writable ? "good" : "warn"}`}>
-                <span>Config write access</span>
-                <strong>{settings?.storage.config_writable ? "Writable" : "Blocked"}</strong>
-              </div>
-              {Object.entries(settings?.credentials ?? {}).map(([name, configured]) => (
-                <div className={`status-tile ${configured ? "good" : "neutral"}`} key={name}>
-                  <span>{name}</span>
-                  <strong>{configured ? "Ready" : "Not set"}</strong>
-                </div>
-              ))}
-            </div>
-          </article>
+            </article>
+          </div>
 
-          <article className="panel settings-side-panel">
-            <div className="panel-header">
-              <div>
-                <p className="eyebrow">Embedding defaults</p>
-                <h2>Optional memory tuning</h2>
+          <aside className="settings-tab-side">
+            <article className="panel settings-side-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Embedding defaults</p>
+                  <h2>Optional memory tuning</h2>
+                </div>
               </div>
-            </div>
-            <div className="settings-stack">
-              <label className="toggle-row">
-                <input
-                  checked={form.embeddingsEnabled}
-                  onChange={(event) => setForm((current) => ({ ...current, embeddingsEnabled: event.target.checked }))}
-                  type="checkbox"
-                />
-                <span>Enable embeddings</span>
-              </label>
-              <label className="field">
-                <span>Embedding model override</span>
-                <input
-                  className="input"
-                  onChange={(event) => setForm((current) => ({ ...current, embeddingsModel: event.target.value }))}
-                  placeholder="Leave empty for auto"
-                  value={form.embeddingsModel}
-                />
-              </label>
-            </div>
-          </article>
-        </aside>
-      </section>
+              <div className="settings-stack">
+                <label className="toggle-row">
+                  <input
+                    checked={form.embeddingsEnabled}
+                    onChange={(event) => setForm((current) => ({ ...current, embeddingsEnabled: event.target.checked }))}
+                    type="checkbox"
+                  />
+                  <span>Enable embeddings</span>
+                </label>
+                <label className="field">
+                  <span>Embedding model override</span>
+                  <input
+                    className="input"
+                    onChange={(event) => setForm((current) => ({ ...current, embeddingsModel: event.target.value }))}
+                    placeholder="Leave empty for auto"
+                    value={form.embeddingsModel}
+                  />
+                </label>
+              </div>
+            </article>
+          </aside>
+        </section>
+      ) : null}
+
+      {activeTab === "workspace" ? (
+        <section className="settings-tab-layout">
+          <div className="settings-tab-main">
+            <article className="panel settings-side-panel">
+              <div className="panel-header">
+                <div>
+                  <p className="eyebrow">Workspace status</p>
+                  <h2>Current setup</h2>
+                </div>
+              </div>
+              <div className="status-cluster settings-status-cluster">
+                <div className={`status-tile ${settings?.storage.env_readable ? "good" : "warn"}`}>
+                  <span>.env readability</span>
+                  <strong>{settings?.storage.env_readable ? "Readable" : "Blocked"}</strong>
+                </div>
+                <div className={`status-tile ${settings?.storage.env_writable ? "good" : "warn"}`}>
+                  <span>.env write access</span>
+                  <strong>{settings?.storage.env_writable ? "Writable" : "Blocked"}</strong>
+                </div>
+                <div className={`status-tile ${settings?.storage.config_writable ? "good" : "warn"}`}>
+                  <span>Config write access</span>
+                  <strong>{settings?.storage.config_writable ? "Writable" : "Blocked"}</strong>
+                </div>
+                {Object.entries(settings?.credentials ?? {}).map(([name, configured]) => (
+                  <div className={`status-tile ${configured ? "good" : "neutral"}`} key={name}>
+                    <span>{name}</span>
+                    <strong>{configured ? "Ready" : "Not set"}</strong>
+                  </div>
+                ))}
+              </div>
+            </article>
+          </div>
+        </section>
+      ) : null}
 
       <section className="panel settings-save-bar">
         <div className="settings-save-copy">

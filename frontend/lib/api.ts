@@ -288,6 +288,11 @@ export type SettingsSnapshot = {
   };
 };
 
+export type GeminiSettingsTestResult = {
+  message: string;
+  settings: SettingsSnapshot;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
@@ -400,6 +405,15 @@ export function getSettings(): Promise<SettingsSnapshot> {
 export function saveSettings(payload: Record<string, unknown>): Promise<SettingsSnapshot> {
   return request<SettingsSnapshot>("/settings", {
     method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function saveAndTestGeminiSettings(
+  payload: Record<string, unknown>,
+): Promise<GeminiSettingsTestResult> {
+  return request<GeminiSettingsTestResult>("/settings/gemini/test", {
+    method: "POST",
     body: JSON.stringify(payload),
   });
 }

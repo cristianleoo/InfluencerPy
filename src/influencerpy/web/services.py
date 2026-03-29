@@ -1,9 +1,11 @@
 import json
 import os
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 from datetime import datetime
 from typing import Any
 
-from dotenv import load_dotenv, set_key
+from dotenv import dotenv_values, load_dotenv, set_key
 import requests
 from sqlmodel import func, select
 
@@ -179,11 +181,23 @@ def _safe_load_settings_env() -> bool:
 def _ensure_settings_storage_writable() -> None:
     ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-    if CONFIG_FILE.exists() and not os.access(CONFIG_FILE, os.W_OK):
+    if CONFIG_FILE.exists() and not os.access(CONFIG_FILE, os.R_OK):
+        raise RuntimeError(
+            f"Settings storage is not readable: {CONFIG_FILE}. Fix file permissions and try again."
+        )
+    if ENV_FILE.exists() and not os.access(ENV_FILE, os.R_OK):
+        raise RuntimeError(
+            f"Settings storage is not readable: {ENV_FILE}. Fix file permissions and try again."
+        )
+
+    config_replacable = os.access(CONFIG_FILE, os.W_OK) if CONFIG_FILE.exists() else False
+    env_replacable = os.access(ENV_FILE, os.W_OK) if ENV_FILE.exists() else False
+
+    if CONFIG_FILE.exists() and not config_replacable and not os.access(CONFIG_FILE.parent, os.W_OK):
         raise RuntimeError(
             f"Settings storage is not writable: {CONFIG_FILE}. Fix file permissions and try again."
         )
-    if ENV_FILE.exists() and not os.access(ENV_FILE, os.W_OK):
+    if ENV_FILE.exists() and not env_replacable and not os.access(ENV_FILE.parent, os.W_OK):
         raise RuntimeError(
             f"Settings storage is not writable: {ENV_FILE}. Fix file permissions and try again."
         )
@@ -191,6 +205,54 @@ def _ensure_settings_storage_writable() -> None:
         raise RuntimeError(
             f"Settings storage directory is not writable: {ENV_FILE.parent}. Fix file permissions and try again."
         )
+
+
+def _is_path_effectively_writable(path: Path) -> bool:
+    if path.exists():
+        return os.access(path, os.W_OK) or os.access(path.parent, os.W_OK)
+    return os.access(path.parent, os.W_OK)
+
+
+def _write_env_file_atomically(values: dict[str, str]) -> None:
+    ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    current = {
+        key: "" if value is None else str(value)
+        for key, value in dotenv_values(ENV_FILE).items()
+    } if ENV_FILE.exists() else {}
+    current.update(values)
+
+    temp_path: Path | None = None
+    try:
+        with NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=ENV_FILE.parent,
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+        for key, value in current.items():
+            set_key(str(temp_path), key, value)
+        os.replace(temp_path, ENV_FILE)
+    finally:
+        if temp_path and temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+
+
+def _fetch_gemini_models_for_api_key(api_key: str) -> list[str]:
+    response = requests.get(
+        "https://generativelanguage.googleapis.com/v1beta/models",
+        headers={"x-goog-api-key": api_key},
+        timeout=15,
+    )
+    response.raise_for_status()
+    data = response.json()
+    models: list[str] = []
+    for model in data.get("models", []):
+        name = model.get("name", "")
+        if not name.startswith("models/gemini"):
+            continue
+        models.append(name.replace("models/", ""))
+    return _dedupe_keep_order(models + CURATED_GEMINI_MODELS)[:20]
 
 
 def serialize_post(post: PostModel, scout_name: str | None = None) -> dict[str, Any]:
@@ -1832,8 +1894,8 @@ def get_settings_snapshot() -> dict[str, Any]:
         "env_file": str(ENV_FILE),
         "storage": {
             "env_readable": env_loaded,
-            "env_writable": os.access(ENV_FILE, os.W_OK) if ENV_FILE.exists() else os.access(ENV_FILE.parent, os.W_OK),
-            "config_writable": os.access(CONFIG_FILE, os.W_OK) if CONFIG_FILE.exists() else os.access(CONFIG_FILE.parent, os.W_OK),
+            "env_writable": _is_path_effectively_writable(ENV_FILE),
+            "config_writable": _is_path_effectively_writable(CONFIG_FILE),
         },
         "ai": {
             "default_provider": config_manager.get("ai.default_provider", "gemini"),
@@ -1873,8 +1935,6 @@ def update_settings(payload: dict[str, Any]) -> dict[str, Any]:
     config_manager = ConfigManager()
     config_manager.ensure_config_exists()
     _ensure_settings_storage_writable()
-    ENV_FILE.touch(exist_ok=True)
-
     ai = payload.get("ai", {})
     embeddings = payload.get("embeddings", {})
     credentials = payload.get("credentials", {})
@@ -1905,14 +1965,60 @@ def update_settings(payload: dict[str, Any]) -> dict[str, Any]:
         "langfuse_secret_key": "LANGFUSE_SECRET_KEY",
     }
 
+    env_updates: dict[str, str] = {}
     for payload_key, env_key in env_mapping.items():
         if payload_key in credentials:
             value = credentials[payload_key] or ""
-            set_key(ENV_FILE, env_key, value)
+            env_updates[env_key] = value
             os.environ[env_key] = value
+
+    if env_updates:
+        _write_env_file_atomically(env_updates)
 
     _safe_load_settings_env()
     return get_settings_snapshot()
+
+
+def save_and_test_gemini_settings(payload: dict[str, Any]) -> dict[str, Any]:
+    config_manager = ConfigManager()
+    config_manager.ensure_config_exists()
+    _ensure_settings_storage_writable()
+    _safe_load_settings_env()
+
+    ai = payload.get("ai", {})
+    credentials = payload.get("credentials", {})
+
+    next_model = (ai.get("gemini_model") or config_manager.get("ai.providers.gemini.default_model", "gemini-2.5-flash") or "").strip()
+    next_api_key = (credentials.get("gemini_api_key") or os.getenv("GEMINI_API_KEY", "") or "").strip()
+
+    if not next_api_key:
+        raise RuntimeError("Add a Gemini API key before testing the connection.")
+    if not next_model:
+        raise RuntimeError("Choose a Gemini model before testing the connection.")
+
+    try:
+        available_models = _fetch_gemini_models_for_api_key(next_api_key)
+    except requests.HTTPError as exc:
+        detail = exc.response.text if exc.response is not None else str(exc)
+        raise RuntimeError(f"Gemini connection failed: {detail}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Gemini connection failed: {exc}") from exc
+
+    if next_model not in available_models:
+        available_models = _dedupe_keep_order(available_models + [next_model])
+
+    config_manager.set("ai.default_provider", "gemini")
+    config_manager.set("ai.providers.gemini.default_model", next_model)
+    _write_env_file_atomically({"GEMINI_API_KEY": next_api_key})
+    os.environ["GEMINI_API_KEY"] = next_api_key
+    _safe_load_settings_env()
+
+    snapshot = get_settings_snapshot()
+    snapshot["ai"]["gemini_models"] = available_models
+    return {
+        "message": f"Gemini connected. {len(available_models)} model IDs are available.",
+        "settings": snapshot,
+    }
 
 
 def get_logs(lines: int = 100) -> dict[str, Any]:
@@ -1939,20 +2045,6 @@ def get_gemini_models() -> list[str]:
         return CURATED_GEMINI_MODELS.copy()
 
     try:
-        response = requests.get(
-            "https://generativelanguage.googleapis.com/v1beta/models",
-            headers={"x-goog-api-key": api_key},
-            timeout=15,
-        )
-        response.raise_for_status()
-        data = response.json()
-        models: list[str] = []
-        for model in data.get("models", []):
-            name = model.get("name", "")
-            if not name.startswith("models/gemini"):
-                continue
-            models.append(name.replace("models/", ""))
-        merged = _dedupe_keep_order(models + CURATED_GEMINI_MODELS)
-        return merged[:20]
+        return _fetch_gemini_models_for_api_key(api_key)
     except Exception:
         return CURATED_GEMINI_MODELS.copy()

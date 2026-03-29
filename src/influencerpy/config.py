@@ -1,4 +1,6 @@
 import yaml
+import os
+from tempfile import NamedTemporaryFile
 from pathlib import Path
 from typing import Dict, Any, Union
 
@@ -53,8 +55,15 @@ class ConfigManager:
     def save_config(self):
         """Save current config to file."""
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
-        with self.config_path.open("w") as f:
-            yaml.dump(self._config, f, default_flow_style=False)
+        with NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=self.config_path.parent,
+            delete=False,
+        ) as handle:
+            yaml.dump(self._config, handle, default_flow_style=False)
+            temp_path = Path(handle.name)
+        os.replace(temp_path, self.config_path)
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a config value using dot notation (e.g. 'ai.default_provider')."""

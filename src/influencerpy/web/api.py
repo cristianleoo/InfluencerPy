@@ -23,6 +23,7 @@ from influencerpy.web.services import (
     search_posts,
     update_scout_node,
     update_scout_record,
+    save_and_test_gemini_settings,
     update_settings,
 )
 
@@ -204,6 +205,14 @@ def settings() -> dict:
 def save_settings(payload: dict) -> dict:
     try:
         return update_settings(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/settings/gemini/test")
+def save_and_test_gemini(payload: dict) -> dict:
+    try:
+        return save_and_test_gemini_settings(payload)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
