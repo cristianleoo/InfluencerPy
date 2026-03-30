@@ -37,6 +37,14 @@ def _frontend_dir() -> Path:
     return _resolve_project_root() / "frontend"
 
 
+def _running_in_container() -> bool:
+    return (
+        Path("/.dockerenv").exists()
+        or bool(os.getenv("container"))
+        or bool(os.getenv("KUBERNETES_SERVICE_HOST"))
+    )
+
+
 def _wait_for_frontend_dependencies() -> None:
     frontend_dir = _frontend_dir()
     node_modules = frontend_dir / "node_modules"
@@ -55,6 +63,12 @@ def _ensure_frontend_build(env: dict[str, str]) -> None:
     # Reusing that build avoids runtime writes into mounted source directories.
     if build_id.exists() or standalone_output.exists():
         return
+
+    if _running_in_container():
+        raise RuntimeError(
+            "Frontend build artifacts are missing in container mode. "
+            "Build the Next.js app during image creation instead of at runtime."
+        )
 
     subprocess.run(["npm", "run", "build"], cwd=frontend_dir, env=env, check=True)
 
