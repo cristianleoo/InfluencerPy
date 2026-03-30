@@ -47,7 +47,16 @@ def _wait_for_frontend_dependencies() -> None:
 
 
 def _ensure_frontend_build(env: dict[str, str]) -> None:
-    subprocess.run(["npm", "run", "build"], cwd=_frontend_dir(), env=env, check=True)
+    frontend_dir = _frontend_dir()
+    build_id = frontend_dir / ".next" / "BUILD_ID"
+    standalone_output = frontend_dir / ".next" / "standalone"
+
+    # Installed/containerized deployments often ship with a prebuilt Next app.
+    # Reusing that build avoids runtime writes into mounted source directories.
+    if build_id.exists() or standalone_output.exists():
+        return
+
+    subprocess.run(["npm", "run", "build"], cwd=frontend_dir, env=env, check=True)
 
 
 def _is_port_available(host: str, port: int) -> bool:
