@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from datetime import datetime
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from dotenv import dotenv_values, load_dotenv, set_key
 import requests
@@ -11,7 +11,6 @@ from sqlmodel import func, select
 import tweepy
 
 from influencerpy.config import CONFIG_FILE, ENV_FILE, ConfigManager
-from influencerpy.core.scouts import ScoutManager
 from influencerpy.database import get_session
 from influencerpy.logger import LOGS_DIR
 from influencerpy.platforms.substack.auth import SubstackAuth
@@ -34,6 +33,9 @@ from influencerpy.types.schema import (
     ScoutNodeModel,
 )
 from influencerpy.web.runtime import is_bot_running
+
+if TYPE_CHECKING:
+    from influencerpy.core.scouts import ScoutManager
 
 SCOUT_TYPE_TOOL_DEFAULTS: dict[str, list[str]] = {
     "search": ["google_search"],
@@ -811,7 +813,13 @@ def _subscribe_rss_feeds_for_flow(legacy_scout_id: int | None, scout_nodes: list
         _subscribe_rss_feeds_for_legacy_scout(legacy_scout_id, scout_node)
 
 
-def _cleanup_preview_scout(manager: ScoutManager, scout_id: int | None) -> None:
+def _get_scout_manager() -> "ScoutManager":
+    from influencerpy.core.scouts import ScoutManager
+
+    return ScoutManager()
+
+
+def _cleanup_preview_scout(manager: "ScoutManager", scout_id: int | None) -> None:
     if scout_id is None:
         return
     feeds = manager.session.exec(
@@ -1407,7 +1415,7 @@ def update_scout_node(node_id: int, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def preview_scout_node(payload: dict[str, Any]) -> dict[str, Any]:
-    manager = ScoutManager()
+    manager = _get_scout_manager()
     preview_scout: ScoutModel | None = None
     try:
         preview_scout = ScoutModel(
@@ -1717,7 +1725,7 @@ def delete_scout_record(scout_id: int) -> dict[str, Any]:
 
 
 def run_scout_workflow(scout_id: int) -> dict[str, Any]:
-    manager = ScoutManager()
+    manager = _get_scout_manager()
     try:
         with next(get_session()) as session:
             flow, scout_node, agent_node, channel_node = _get_flow_bundle(session, scout_id)
